@@ -1,0 +1,6 @@
+# Kopija flasha i raspakirani firmware: tuđi kod, ostaje samo lokalno
+/dump/
+/rootfs/
+
+# Logovi s kamere sadrže Wi-Fi lozinku i Yi bindkey u čistom tekstu
+*.log
