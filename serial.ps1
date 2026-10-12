@@ -4,39 +4,88 @@
 param(
   [string]$Port = 'COM4',
   [int]$Baud = 115200,
-  # linije koje odgovaraju ovom regexu se ne ispisuju
-  [string]$Spam = 'yi_cloud_init|ak_net_get_mac|net_get:|wpa_cli still|P_WPA_SPC|ak_yi_qrcode|mt_ctrl_thread'
+  # linije koje odgovaraju nekom od ovih regexa se ne ispisuju
+  [string[]]$Spam = @(
+    # log od anyka_ipc (vremenska oznaka ostane čitljiva i kad šum pokvari ostatak linije)
+    '\d\d-\d\d \d\d:\d\d:\d\d\.\d', 'yi_cloud_init', 'ip:,mac:', 'ak_net_get_mac', 'net_get:',
+    'ak_yi_qrcode', 'mt_ctrl_thread', 'P_WPA_SPC', 'connectting', 'wpa_state=',
+    # periodično ponovno pokretanje wifija (wifi_manage.sh stop/start)
+    'wifi_manage\.sh', 'wifi station', 'killall: udhcpc', 'wpa_ctrl_open', 'rmmod', 'rtl8188',
+    'wifi driver', 'SIOCSIWAP', 'wifi connecting tone', 'wifi config', 'check security',
+    'security=', 'station_connect', 'Selected interface', '^OK$'
+  ),
+  # za testiranje: umjesto porta propusti kroz filter snimljeni izlaz iz datoteke
+  [string]$Replay
 )
 
+$script:buf = ''
+$script:open = $false   # na ekranu je nedovršena linija (prompt, eho tipki)
+$SpamRe = $Spam -join '|'
+
+# tekst bez ANSI escape sekvenci (boje, pomicanje kursora)
+function Strip([string]$s) { $s -replace '\x1b\[[0-9;?]*[A-Za-z]', '' }
+
+function Test-Spam([string]$s) { (Strip $s) -match $SpamRe }
+
+# šum na liniji: kontrolni znakovi (osim \a \b \t) i bajtovi iznad ASCII-ja
+function Test-Noise([string]$s) {
+  $t = Strip $s
+  if ($t.Length -eq 0) { return $false }
+  $bad = 0
+  foreach ($c in $t.ToCharArray()) {
+    if (($c -lt ' ' -and "`a`b`t".IndexOf($c) -lt 0) -or $c -gt '~') { $bad++ }
+  }
+  return $bad -ge 3 -or $bad * 8 -gt $t.Length
+}
+
+# cijele linije: preskoči spam, šum i prazne linije (osim Entera na otvorenoj liniji)
+function Write-Lines([string]$text) {
+  foreach ($l in $text.Split("`n")) {
+    $l = $l.TrimEnd("`r")
+    if ((Test-Spam $l) -or (Test-Noise $l)) { continue }
+    if ((Strip $l).Trim() -eq '' -and -not ($script:open -and $l -eq '')) { continue }
+    [Console]::WriteLine($l)
+    $script:open = $false
+  }
+}
+
+# nedovršena linija: ispiši ako nije spam, šum ili samo ANSI kod
+function Write-Partial([string]$text) {
+  if ((Test-Spam $text) -or (Test-Noise $text) -or (Strip $text) -eq '') { return }
+  [Console]::Write($text)
+  $script:open = $true
+}
+
+function Feed([string]$d) {
+  $script:buf += $d
+  $i = $script:buf.LastIndexOf("`n")
+  if ($i -ge 0) {
+    Write-Lines $script:buf.Substring(0, $i)
+    $script:buf = $script:buf.Substring($i + 1)
+  }
+}
+
+$latin1 = [Text.Encoding]::GetEncoding(28591)   # šum ostaje prepoznatljiv umjesto '?'
+
+if ($Replay) {
+  Feed ([IO.File]::ReadAllText($Replay, $latin1))
+  if ($script:buf) { Write-Partial $script:buf }
+  return
+}
+
 $p = New-Object System.IO.Ports.SerialPort -ArgumentList $Port, $Baud, 'None', 8, 'One'
+$p.Encoding = $latin1
 $p.Open()
-$buf = ''
 $last = [DateTime]::Now
-$skip = $false   # zadnja linija je bila spam -> preskoči prazne linije iza nje
-$open = $false   # na ekranu je nedovršena linija (prompt, eho tipki)
 try {
   while ($true) {
     $d = $p.ReadExisting()
-    if ($d) { $buf += $d; $last = [DateTime]::Now }
-
-    # cijele linije: ispiši samo one koje nisu spam
-    $i = $buf.LastIndexOf("`n")
-    if ($i -ge 0) {
-      foreach ($l in $buf.Substring(0, $i).Split("`n")) {
-        $l = $l.TrimEnd("`r")
-        if ($l -match $Spam) { $skip = $true; continue }
-        if ($l.Trim() -eq '' -and $skip -and -not $open) { continue }
-        [Console]::WriteLine($l)
-        $skip = $false
-        $open = $false
-      }
-      $buf = $buf.Substring($i + 1)
-    }
+    if ($d) { Feed $d; $last = [DateTime]::Now }
 
     # nedovršena linija: ispiši kad UART utihne
-    if ($buf -and ([DateTime]::Now - $last).TotalMilliseconds -gt 60) {
-      if ($buf -notmatch $Spam) { [Console]::Write($buf); $open = $true }
-      $buf = ''
+    if ($script:buf -and ([DateTime]::Now - $last).TotalMilliseconds -gt 60) {
+      Write-Partial $script:buf
+      $script:buf = ''
     }
 
     while ([Console]::KeyAvailable) {
