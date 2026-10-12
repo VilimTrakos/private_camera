@@ -8,7 +8,7 @@ param(
   [string[]]$Spam = @(
     # log od anyka_ipc (vremenska oznaka ostane čitljiva i kad šum pokvari ostatak linije)
     '\d\d-\d\d \d\d:\d\d:\d\d\.\d', 'yi_cloud_init', 'ip:,mac:', 'ak_net_get_mac', 'net_get:',
-    'ak_yi_qrcode', 'mt_ctrl_thread', 'P_WPA_SPC', 'connectting', 'wpa_state=',
+    'ak_yi_qrcode', 'mt_ctrl_thread', 'P_WPA_SPC', 'connectting', 'wpa_state=', 'encode frame',
     # periodično ponovno pokretanje wifija (wifi_manage.sh stop/start)
     'wifi_manage\.sh', 'wifi station', 'killall: udhcpc', 'wpa_ctrl_open', 'rmmod', 'rtl8188',
     'wifi driver', 'SIOCSIWAP', 'wifi connecting tone', 'wifi config', 'check security',
