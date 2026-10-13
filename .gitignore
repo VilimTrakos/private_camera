@@ -10,3 +10,7 @@
 /*.gpr
 /*.rep/
 /*_decompiled/
+
+# Izlaz build.sh i testova
+/localcam/sd/debug/lib/
+/localcam/test/build/
