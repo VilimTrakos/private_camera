@@ -1,0 +1,141 @@
+<!doctype html>
+<html lang="hr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Kamera uživo</title>
+<style>
+  :root {
+    --bg: #0b0d10;
+    --panel: rgba(20, 23, 28, 0.82);
+    --text: #e8eaed;
+    --muted: #9aa0a6;
+    --live: #34c759;
+    --warn: #ff9f0a;
+    --border: rgba(255, 255, 255, 0.12);
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; background: var(--bg); color: var(--text);
+    font: 15px/1.4 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+  .stage { position: fixed; inset: 0; display: flex; align-items: center; justify-content: center; }
+  video { width: 100%; height: 100%; object-fit: contain; background: #000; }
+  .bar { position: fixed; left: 16px; right: 16px; display: flex; align-items: center; gap: 8px; }
+  .top { top: 16px; justify-content: space-between; }
+  .bottom { bottom: 16px; justify-content: flex-end; }
+  .pill, button { background: var(--panel); border: 1px solid var(--border); border-radius: 999px;
+    color: var(--text); padding: 7px 14px; font: inherit; backdrop-filter: blur(6px); }
+  button { cursor: pointer; }
+  button:hover { border-color: rgba(255, 255, 255, 0.3); }
+  button[aria-pressed="true"] { background: var(--text); color: var(--bg); }
+  .dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 8px;
+    background: var(--warn); vertical-align: middle; }
+  .live .dot { background: var(--live); }
+  .muted { color: var(--muted); }
+</style>
+</head>
+<body>
+<div class="stage"><video id="v" autoplay muted playsinline></video></div>
+
+<div class="bar top">
+  <span class="pill" id="status"><span class="dot"></span><span id="status-text">Spajanje…</span></span>
+  <span class="pill muted" id="res"></span>
+</div>
+<div class="bar bottom">
+  <button id="hd" aria-pressed="true" title="Glavni stream 1280×720 ili manji 640×360">HD</button>
+  <button id="fs" title="Cijeli zaslon">⛶</button>
+</div>
+
+<script src="jmuxer.min.js"></script>
+<script>
+  // Stream format from the camera (libYiP2P replacement):
+  // [u32 length][u32 timestamp ms][u8 flags][H.264 frame], big-endian.
+  const HDR = 9;
+  const video = document.getElementById('v');
+  const statusPill = document.getElementById('status');
+  const statusText = document.getElementById('status-text');
+  const resLabel = document.getElementById('res');
+  const hdButton = document.getElementById('hd');
+
+  let hd = true;
+  try { hd = localStorage.getItem('hd') !== '0'; } catch (e) {}
+  let ctrl = null, jm = null, retry = null;
+
+  function setStatus(text, live) {
+    statusText.textContent = text;
+    statusPill.classList.toggle('live', !!live);
+  }
+
+  function stop() {
+    clearTimeout(retry);
+    if (ctrl) ctrl.abort();
+    if (jm) jm.destroy();
+    ctrl = jm = null;
+  }
+
+  async function play() {
+    stop();
+    hdButton.setAttribute('aria-pressed', String(hd));
+    resLabel.textContent = hd ? '1280×720' : '640×360';
+    const myCtrl = ctrl = new AbortController();
+    jm = new JMuxer({ node: video, mode: 'video', flushingTime: 0, fps: 15, debug: false,
+                      onError: () => { if (ctrl === myCtrl) play(); } });
+    setStatus('Spajanje…');
+    try {
+      const res = await fetch('/stream?hd=' + (hd ? 1 : 0), { cache: 'no-store', signal: myCtrl.signal });
+      if (!res.ok) throw new Error(res.status === 503 ? 'Previše gledatelja' : 'Greška ' + res.status);
+      const reader = res.body.getReader();
+      let buf = new Uint8Array(0), lastTs = null, frames = 0;
+      for (;;) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        const joined = new Uint8Array(buf.length + value.length);
+        joined.set(buf);
+        joined.set(value, buf.length);
+        buf = joined;
+        let off = 0;
+        while (buf.length - off >= HDR) {
+          const len = ((buf[off] << 24) | (buf[off + 1] << 16) | (buf[off + 2] << 8) | buf[off + 3]) >>> 0;
+          if (buf.length - off < HDR + len) break;
+          const ts = ((buf[off + 4] << 24) | (buf[off + 5] << 16) | (buf[off + 6] << 8) | buf[off + 7]) >>> 0;
+          let duration = lastTs === null ? 66 : ts - lastTs;
+          if (!(duration > 0 && duration < 1000)) duration = 66;
+          lastTs = ts;
+          jm.feed({ video: buf.subarray(off + HDR, off + HDR + len), duration });
+          off += HDR + len;
+          if (++frames === 1) setStatus('Uživo', true);
+        }
+        buf = buf.slice(off);
+      }
+      throw new Error('Veza prekinuta');
+    } catch (e) {
+      if (myCtrl.signal.aborted) return;
+      setStatus(e.message + ', ponovno za 3 s');
+      retry = setTimeout(play, 3000);
+    }
+  }
+
+  // Keep the picture at the live edge instead of drifting behind.
+  setInterval(() => {
+    const b = video.buffered;
+    if (!b.length) return;
+    const end = b.end(b.length - 1);
+    if (end - video.currentTime > 1.5) video.currentTime = end - 0.3;
+    if (video.paused) video.play().catch(() => {});
+  }, 1000);
+
+  hdButton.addEventListener('click', () => {
+    hd = !hd;
+    try { localStorage.setItem('hd', hd ? '1' : '0'); } catch (e) {}
+    play();
+  });
+  document.getElementById('fs').addEventListener('click', () => {
+    if (document.fullscreenElement) document.exitFullscreen();
+    else document.documentElement.requestFullscreen().catch(() => {});
+  });
+
+  // Without the cloud the camera has no clock source; give it ours.
+  fetch('/time?t=' + Date.now(), { cache: 'no-store' }).catch(() => {});
+  play();
+</script>
+</body>
+</html>
