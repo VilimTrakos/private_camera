@@ -4,3 +4,9 @@
 
 # Logovi s kamere sadrže Wi-Fi lozinku i Yi bindkey u čistom tekstu
 *.log
+
+# Ghidra projekt i cijeli dekompajlirani firmware ostaju lokalno; u repou
+# su samo dijelovi koje localcam zamjenjuje (original/)
+/*.gpr
+/*.rep/
+/*_decompiled/
