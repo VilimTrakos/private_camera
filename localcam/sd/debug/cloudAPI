@@ -1,0 +1,5 @@
+#!/bin/sh
+# Stand-in for /usr/bin/cloudAPI. anyka_ipc runs it for every Yi web API call
+# (login, sync_time, bindkey, event upload, ...). Always answer "failed".
+echo '{"code":"-1","message":"offline"}'
+exit 1
