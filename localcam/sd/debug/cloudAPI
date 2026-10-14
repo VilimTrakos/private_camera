@@ -1,7 +1,8 @@
 #!/bin/sh
 # Stand-in for /usr/bin/cloudAPI. anyka_ipc runs it for every Yi web API call
 # (login, sync_time, bindkey, event upload, ...). Always answer "failed".
-# Each call is noted on the console (stdout is read by anyka_ipc).
-echo "[localcam] $(date +%T) cloudAPI $*" > /dev/console
+# anyka_ipc retries these calls in a loop; answering after a pause keeps that
+# loop from using the CPU.
+sleep 2
 echo '{"code":"-1","message":"offline"}'
 exit 1

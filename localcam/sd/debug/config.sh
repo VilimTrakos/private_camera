@@ -15,7 +15,7 @@ LOG=$D/localcam.log
 
 # 1 = anyka_ipc's console output is discarded (no log spam on the serial
 #     console); 0 = keep it, for debugging.
-QUIET=0
+QUIET=1
 # 1 = stop the FTP server that rc.local starts on port 21 (root, no password).
 STOP_FTP=0
 # 1 = keep deleting the default route, so nothing can reach the internet even
@@ -30,7 +30,12 @@ mkdir -p $T
 {
 	echo "=== localcam boot $(date)"
 	cp -r $D/lib $D/scripts $D/www $D/cloudAPI $T/ && echo "copied to $T"
-	chmod 755 $T/cloudAPI $T/scripts/*.sh
+	# fuser/umount/mount guards for anyka_ipc's SD remount (scripts/sdguard.sh)
+	mkdir -p $T/bin
+	for n in fuser umount mount; do
+		cp $T/scripts/sdguard.sh $T/bin/$n
+	done
+	chmod 755 $T/cloudAPI $T/scripts/*.sh $T/bin/*
 
 	# Yi cloud: P2P becomes the local web server, upload/update/report fail.
 	for f in libYiP2P.so liboss.so libcloudapi.so; do

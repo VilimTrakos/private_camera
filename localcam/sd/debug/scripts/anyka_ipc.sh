@@ -28,6 +28,9 @@ start()
 	fi
 	source /etc/jffs2/time_zone.sh
 	cd /
+	# Our fuser/umount/mount guards come first for anyka_ipc (scripts/sdguard.sh).
+	PATH=$T/bin:$PATH
+	export PATH
 	(
 		started=$(cut -d. -f1 /proc/uptime)
 		if [ "$OUT" = /dev/null ]; then
