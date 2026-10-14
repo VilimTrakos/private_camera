@@ -33,6 +33,15 @@
   .muted { color: var(--muted); }
   .stats { margin-right: auto; font-size: 13px; font-variant-numeric: tabular-nums; }
   @media (max-width: 480px) { .stats { display: none; } }
+  .pad { position: fixed; right: 16px; bottom: 72px; display: grid; gap: 6px;
+    grid-template-columns: repeat(3, 52px); grid-template-rows: repeat(3, 52px); }
+  .pad button { width: 52px; height: 52px; padding: 0; font-size: 18px; touch-action: none;
+    user-select: none; -webkit-user-select: none; -webkit-touch-callout: none; }
+  .pad .up { grid-area: 1 / 2; }
+  .pad .left { grid-area: 2 / 1; }
+  .pad .right { grid-area: 2 / 3; }
+  .pad .down { grid-area: 3 / 2; }
+  .pad button.active { background: var(--text); color: var(--bg); }
 </style>
 </head>
 <body>
@@ -42,12 +51,18 @@
   <span class="pill" id="status"><span class="dot"></span><span id="status-text">Spajanje…</span></span>
   <span class="pill muted" id="res"></span>
 </div>
+<div class="pad" aria-label="Motori: drži strelicu za okretanje kamere">
+  <button class="up" data-dir="up" title="Gore">▲</button>
+  <button class="left" data-dir="left" title="Lijevo">◀</button>
+  <button class="right" data-dir="right" title="Desno">▶</button>
+  <button class="down" data-dir="down" title="Dolje">▼</button>
+</div>
 <div class="bar bottom">
   <span class="pill muted stats" id="stats"></span>
   <button id="ir" title="Noćni vid (infracrvene lampice): automatski, uvijek uključen ili isključen">IR auto</button>
   <button id="white" aria-pressed="false" title="Bijelo svjetlo">💡</button>
-  <button id="flip" aria-pressed="false" title="Okreni sliku naopako (vrijedi i za snimke)">↕</button>
-  <button id="mirror" aria-pressed="false" title="Zrcali lijevo-desno (vrijedi i za snimke)">↔</button>
+  <button id="flip" aria-pressed="false" title="Okreni sliku naopako (vrijedi i za snimke)">Slika ↕</button>
+  <button id="mirror" aria-pressed="false" title="Zrcali sliku lijevo-desno (vrijedi i za snimke)">Slika ↔</button>
   <button id="hd" aria-pressed="true" title="Glavni stream 1280×720 ili manji 640×360">HD</button>
   <button id="fs" title="Cijeli zaslon">⛶</button>
 </div>
@@ -185,6 +200,45 @@
   whiteButton.addEventListener('click', () =>
     setLight('?white=' + (whiteButton.getAttribute('aria-pressed') === 'true' ? 0 : 1)));
   setLight('');
+
+  // Pan/tilt motors: hold an arrow (or an arrow key) to move. The page repeats
+  // the command every 300 ms; the camera stops by itself if that stops coming.
+  let ptzDir = null, ptzTimer = null;
+  function ptzSend(dir) { fetch('/ptz?dir=' + dir, { cache: 'no-store' }).catch(() => {}); }
+  function ptzStart(dir, btn) {
+    if (ptzDir === dir) return;
+    ptzStop();
+    ptzDir = dir;
+    if (btn) btn.classList.add('active');
+    ptzSend(dir);
+    ptzTimer = setInterval(() => ptzSend(dir), 300);
+  }
+  function ptzStop() {
+    if (!ptzDir) return;
+    clearInterval(ptzTimer);
+    ptzTimer = ptzDir = null;
+    document.querySelectorAll('.pad button.active').forEach(b => b.classList.remove('active'));
+    ptzSend('stop');
+  }
+  document.querySelectorAll('.pad button').forEach(btn => {
+    btn.addEventListener('pointerdown', e => {
+      e.preventDefault();
+      btn.setPointerCapture(e.pointerId);
+      ptzStart(btn.dataset.dir, btn);
+    });
+    for (const ev of ['pointerup', 'pointercancel', 'lostpointercapture']) btn.addEventListener(ev, ptzStop);
+    btn.addEventListener('contextmenu', e => e.preventDefault());
+  });
+  const keyDir = { ArrowUp: 'up', ArrowDown: 'down', ArrowLeft: 'left', ArrowRight: 'right' };
+  document.addEventListener('keydown', e => {
+    const dir = keyDir[e.key];
+    if (!dir) return;
+    e.preventDefault();
+    ptzStart(dir, document.querySelector('.pad [data-dir="' + dir + '"]'));
+  });
+  document.addEventListener('keyup', e => { if (keyDir[e.key] && keyDir[e.key] === ptzDir) ptzStop(); });
+  document.addEventListener('visibilitychange', () => { if (document.hidden) ptzStop(); });
+  window.addEventListener('blur', ptzStop);
 
   hdButton.addEventListener('click', () => {
     hd = !hd;

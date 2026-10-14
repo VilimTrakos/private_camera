@@ -13,6 +13,8 @@
  *   GET /time?t=MS   set the camera clock from the browser (no internet = no NTP)
  *   GET /image       image orientation as JSON; ?flip=0|1&mirror=0|1 changes it
  *   GET /light       night vision and white light; ?ir=auto|on|off&white=0|1
+ *   GET /ptz?dir=    pan/tilt: up|down|left|right keeps moving while repeated
+ *                    (at least every PTZ_HOLD_MS), stop stops
  *   GET /status      read-only diagnostics: routes, DNS, Wi-Fi link, mounts, viewers
  *
  * Latency: a frame is dropped (and sending resumes at the next key frame)
@@ -59,6 +61,7 @@
 #define HW_CONF          "/etc/jffs2/hw.conf"
 #define WHITE_LED        "/sys/user-gpio/WHITE_LED"
 #define VI_HANDLE        100		/* what anyka_ipc itself passes */
+#define PTZ_HOLD_MS      700		/* motor stops unless the browser repeats within this */
 
 /* Same layout as yi_frame_info_t in anyka_ipc (from its debug info). */
 typedef struct {
@@ -83,6 +86,9 @@ extern int ak_vi_set_flip_mirror(int handle, int flip, int mirror);
 extern int ak_vi_get_flip_mirror(int handle, int *flip, int *mirror);
 /* 0 = night (IR on), 1 = day (IR off), 2 = automatic; anyka_ipc never calls it itself. */
 extern int ak_misc_photosensitive_set_status_ex(int mode);
+/* The Yi app's pan/tilt calls: direction 1 up, 2 down, 3 left, 4 right; speed is ignored. */
+extern int yi_p2p_on_ptz_direction_ctrl(int direction, uint32_t speed);
+extern int yi_p2p_on_ptz_direction_ctrl_stop(void);
 
 enum { S_FREE, S_ALIVE, S_CLOSED, S_RELEASED };
 
@@ -542,6 +548,78 @@ static void handle_light(int fd, const char *query)
 	send_status(fd, "200 OK", body);
 }
 
+/* ---------- pan/tilt motors ---------- */
+
+static const char *const ptz_names[] = { "stopped", "up", "down", "left", "right" };
+static pthread_mutex_t ptz_lock = PTHREAD_MUTEX_INITIALIZER;
+static int ptz_dir;			/* 0 = stopped, else YI_PTZ_DIRECTION */
+static unsigned long long ptz_until;	/* ms; stop if no command came before this */
+
+static unsigned long long now_ms(void)
+{
+	struct timeval tv;
+
+	gettimeofday(&tv, NULL);
+	return (unsigned long long)tv.tv_sec * 1000 + tv.tv_usec / 1000;
+}
+
+static void ptz_stop_locked(void)
+{
+	if (ptz_dir) {
+		yi_p2p_on_ptz_direction_ctrl_stop();
+		ptz_dir = 0;
+	}
+}
+
+/* A lost connection or closed page must not leave the motor running. */
+static void *ptz_watchdog(void *arg)
+{
+	(void)arg;
+	for (;;) {
+		usleep(100000);
+		pthread_mutex_lock(&ptz_lock);
+		if (ptz_dir && now_ms() > ptz_until) {
+			ptz_stop_locked();
+			logmsg("ptz: stopped, no command from the browser\n");
+		}
+		pthread_mutex_unlock(&ptz_lock);
+	}
+	return NULL;
+}
+
+static void handle_ptz(int fd, const char *query)
+{
+	const char *p = query ? strstr(query, "dir=") : NULL;
+	int dir, i;
+
+	if (!p) {
+		send_status(fd, "400 Bad Request", "missing dir\n");
+		return;
+	}
+	for (dir = -1, i = 0; i < 5; i++)
+		if (!strncmp(p + 4, ptz_names[i], strlen(ptz_names[i])) ||
+		    (i == 0 && !strncmp(p + 4, "stop", 4)))
+			dir = i;
+	if (dir < 0) {
+		send_status(fd, "400 Bad Request", "dir must be up, down, left, right or stop\n");
+		return;
+	}
+	pthread_mutex_lock(&ptz_lock);
+	if (dir == 0) {
+		ptz_stop_locked();
+	} else {
+		/* Repeating the same direction only extends the deadline;
+		 * re-issuing it would stop and restart the motor. */
+		if (ptz_dir != dir) {
+			yi_p2p_on_ptz_direction_ctrl(dir, 0);
+			ptz_dir = dir;
+		}
+		ptz_until = now_ms() + PTZ_HOLD_MS;
+	}
+	pthread_mutex_unlock(&ptz_lock);
+	send_status(fd, "200 OK", "ok\n");
+}
+
 /* ---------- diagnostics ---------- */
 
 static size_t append_file(char *buf, size_t pos, size_t size, const char *title, const char *path)
@@ -573,6 +651,7 @@ static void handle_status(int fd)
 	pos = append_file(buf, pos, size, "DNS servers (/etc/resolv.conf, should be empty)", "/etc/resolv.conf");
 	pos = append_file(buf, pos, size, "Wi-Fi link", "/proc/net/wireless");
 	pos = append_file(buf, pos, size, "mounts", "/proc/mounts");
+	pos += snprintf(buf + pos, size - pos, "--- pan/tilt\n%s\n", ptz_names[ptz_dir]);
 	pos += snprintf(buf + pos, size - pos, "--- viewers\n");
 	for (i = 0; i < MAX_SESSIONS && pos < size - 1; i++) {
 		struct session *s = &sessions[i];
@@ -676,6 +755,8 @@ static void *client_thread(void *arg)
 		handle_stream(fd, query);
 	else if (!strcmp(path, "/status"))
 		handle_status(fd);
+	else if (!strcmp(path, "/ptz"))
+		handle_ptz(fd, query);
 	else if (!strcmp(path, "/light"))
 		handle_light(fd, query);
 	else if (!strcmp(path, "/image"))
@@ -732,6 +813,8 @@ static void *server_thread(void *arg)
 	logmsg("web UI on port %d, files from %s\n", port, www_dir);
 	settings_load();
 	if (pthread_create(&t, NULL, settings_keeper, NULL) == 0)
+		pthread_detach(t);
+	if (pthread_create(&t, NULL, ptz_watchdog, NULL) == 0)
 		pthread_detach(t);
 
 	for (;;) {

@@ -111,6 +111,18 @@ int ak_misc_photosensitive_set_status_ex(int mode)
 	return mode >= 0 && mode <= 2 ? 0 : -1;
 }
 
+/* Pan/tilt, as called by the Yi app. */
+int yi_p2p_on_ptz_direction_ctrl(int direction, uint32_t speed)
+{
+	(void)speed;
+	return direction >= 1 && direction <= 4 ? 0 : -1;
+}
+
+int yi_p2p_on_ptz_direction_ctrl_stop(void)
+{
+	return 0;
+}
+
 int yi_p2p_on_new_session(uint32_t sid)
 {
 	pthread_t t;

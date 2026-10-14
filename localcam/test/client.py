@@ -160,6 +160,25 @@ status, body = get("/light?ir=bogus")
 check(b'"ir":"off"' in body, "unknown IR mode ignored")
 get("/light?ir=auto&white=0")
 
+# pan/tilt: moves while repeated, stops on "stop" or when the browser goes quiet
+def ptz_state():
+    _, b = get("/status")
+    return b.split(b"--- pan/tilt\n", 1)[1].split(b"\n", 1)[0].decode() if b"--- pan/tilt" in b else "?"
+
+status, _ = get("/ptz?dir=left")
+check(status.endswith("200 OK") and ptz_state() == "left", "ptz left starts the motor")
+get("/ptz?dir=stop")
+check(ptz_state() == "stopped", "ptz stop stops it")
+get("/ptz?dir=up")
+time.sleep(0.4)
+get("/ptz?dir=up")
+time.sleep(0.4)
+check(ptz_state() == "up", "repeating the direction keeps it moving")
+time.sleep(1.0)
+check(ptz_state() == "stopped", "motor stops by itself when the browser goes quiet")
+status, _ = get("/ptz?dir=sideways")
+check("400" in status, f"unknown direction refused ({status})")
+
 # slow link: a reader that stalls must not build up delay; frames are dropped
 # and the stream resumes on a key frame
 time.sleep(2)
