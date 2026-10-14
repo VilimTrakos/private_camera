@@ -38,13 +38,23 @@ start()
 	say "starting anyka_ipc, run $n"
 	(
 		if [ "$OUT" = /dev/null ]; then
-			anyka_ipc > /dev/null 2>&1
+			anyka_ipc > /dev/null 2>&1 &
 		else
-			anyka_ipc
+			anyka_ipc &
 		fi
+		pid=$!
+		say "anyka_ipc run $n has pid $pid"
+		wait $pid
 		st=$?
 		say "anyka_ipc run $n ended, exit status $st"
-		{ echo "--- run $n, status $st, $(date +%T)"; free; dmesg | tail -n 30; } >> /mnt/debug/anyka_exit.log 2>&1
+		{
+			echo "=== run $n, pid $pid, status $st, $(date +%T), uptime $(cat /proc/uptime)"
+			free
+			echo "--- process lists before the end (sort by the @ uptime lines)"
+			cat $T/ps.* 2>/dev/null
+			echo "--- dmesg"
+			dmesg
+		} >> /mnt/debug/anyka_exit.log 2>&1
 	) &
 }
 

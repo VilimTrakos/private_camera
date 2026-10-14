@@ -16,6 +16,9 @@ STOP_FTP=0
 # 1 = keep deleting the default route, so nothing can reach the internet even
 #     if something adds one.
 BLOCK_INTERNET=1
+# 1 = debugging: keep the last ~5 s of process lists in /tmp/localcam, so
+#     scripts/anyka_ipc.sh can save them when anyka_ipc is killed.
+DIAG=1
 
 mkdir -p $T
 {
@@ -49,6 +52,17 @@ mkdir -p $T
 
 # The radio needs ~10 s to come up; do not hold up the boot for it.
 sh $D/scripts/ap_start.sh >> $LOG 2>&1 < /dev/null &
+
+if [ "$DIAG" = 1 ]; then
+	(
+		i=0
+		while true; do
+			{ echo "@ $(cat /proc/uptime)"; ps -o pid,ppid,args; } > $T/ps.$i 2>&1
+			i=$(((i + 1) % 25))
+			usleep 200000
+		done
+	) < /dev/null > /dev/null 2>&1 &
+fi
 
 if [ "$BLOCK_INTERNET" = 1 ]; then
 	( while true; do route del default 2>/dev/null; sleep 5; done ) < /dev/null > /dev/null 2>&1 &
