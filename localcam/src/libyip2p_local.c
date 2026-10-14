@@ -51,8 +51,8 @@
 #define MAX_CLIENTS      16
 #define RELEASE_WAIT_S   15
 #define FRAME_HDR_LEN    9
-#define STREAM_SNDBUF    (64 * 1024)
-#define MAX_QUEUED       (96 * 1024)	/* ~0.5 s of 720p video */
+#define STREAM_SNDBUF    (256 * 1024)
+#define MAX_QUEUED       (256 * 1024)	/* a few HD key frames; ~1-2 s on a slow link */
 #define IMAGE_CONF       "/mnt/debug/image.conf"
 #define VI_HANDLE        100		/* what anyka_ipc itself passes */
 
@@ -89,12 +89,13 @@ struct session {
 	int got_key;
 	unsigned long frames;
 	unsigned long dropped;
+	int limit;		/* bytes allowed in flight, see handle_stream() */
 };
 
 static struct session sessions[MAX_SESSIONS] = {
-	{ PTHREAD_MUTEX_INITIALIZER, 0, S_FREE, -1, 0, 0, 0, 0 },
-	{ PTHREAD_MUTEX_INITIALIZER, 0, S_FREE, -1, 0, 0, 0, 0 },
-	{ PTHREAD_MUTEX_INITIALIZER, 0, S_FREE, -1, 0, 0, 0, 0 },
+	{ PTHREAD_MUTEX_INITIALIZER, 0, S_FREE, -1, 0, 0, 0, 0, MAX_QUEUED },
+	{ PTHREAD_MUTEX_INITIALIZER, 0, S_FREE, -1, 0, 0, 0, 0, MAX_QUEUED },
+	{ PTHREAD_MUTEX_INITIALIZER, 0, S_FREE, -1, 0, 0, 0, 0, MAX_QUEUED },
 };
 static pthread_mutex_t alloc_lock = PTHREAD_MUTEX_INITIALIZER;
 static uint32_t next_sid = 1000;
@@ -171,6 +172,7 @@ static struct session *session_alloc(int fd, int hd)
 			s->got_key = 0;
 			s->frames = 0;
 			s->dropped = 0;
+			s->limit = MAX_QUEUED;
 			pthread_mutex_unlock(&s->lock);
 			break;
 		}
@@ -456,6 +458,14 @@ static void handle_stream(int fd, const char *query)
 	setsockopt(fd, SOL_SOCKET, SO_SNDBUF, &sndbuf, sizeof(sndbuf));
 	image_apply();
 	s = session_alloc(fd, hd);
+	if (s) {
+		/* The kernel caps the buffer (net.core.wmem_max); stay under what we
+		 * really got, so send() never has to wait. */
+		socklen_t optlen = sizeof(sndbuf);
+		if (getsockopt(fd, SOL_SOCKET, SO_SNDBUF, &sndbuf, &optlen) == 0 &&
+		    sndbuf * 3 / 4 < s->limit)
+			s->limit = sndbuf * 3 / 4;
+	}
 	if (!s) {
 		send_status(fd, "503 Service Unavailable", "too many viewers\n");
 		return;
@@ -647,7 +657,7 @@ int yi_p2p_send_frame_data(uint32_t sid, yi_frame_info_t *info, void *buf, int l
 	 * sending thread and letting the delay grow. An empty queue always
 	 * takes the frame, so large key frames still get through. */
 	queued = queued_bytes(s->fd);
-	if (queued > 0 && queued + FRAME_HDR_LEN + len > MAX_QUEUED) {
+	if (queued > 0 && queued + FRAME_HDR_LEN + len > s->limit) {
 		s->got_key = 0;
 		s->dropped++;
 		goto out;
