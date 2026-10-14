@@ -38,7 +38,8 @@ load_driver()
 	sleep 2
 	echo 0 > /sys/user-gpio/wifi_en	# rtl8188ftv: 0 = power on
 	sleep 3
-	insmod /usr/modules/rtl8188fu.ko
+	# rtw_power_mgnt=0: no Wi-Fi power saving (it costs throughput and latency)
+	insmod /usr/modules/rtl8188fu.ko rtw_power_mgnt=0
 	i=0
 	while [ ! -d /sys/class/net/wlan0 ] && [ $i -lt 15 ]; do
 		sleep 1
@@ -77,6 +78,8 @@ start_home()
 		fi
 		sleep 2
 	done
+	# Realtek power saving adds hundreds of ms of delay and drops packets.
+	iwconfig wlan0 power off 2>/dev/null
 	rm -f $T/ip
 	udhcpc -i wlan0 -s $T/scripts/udhcpc.sh -b -p $T/udhcpc.pid -t 10 -T 3
 	i=0
