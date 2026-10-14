@@ -14,3 +14,6 @@
 # Izlaz build.sh i testova
 /localcam/sd/debug/lib/
 /localcam/test/build/
+
+# Wi-Fi lozinke: na kartici je wifi.conf, u repou samo wifi.conf.example
+/localcam/sd/debug/wifi.conf

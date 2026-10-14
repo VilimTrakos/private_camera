@@ -58,14 +58,19 @@ mkdir -p $T
 	fi
 	mount -o bind $T/scripts/anyka_ipc.sh /usr/sbin/anyka_ipc.sh && echo "replaced /usr/sbin/anyka_ipc.sh"
 
+	# No DNS: on home Wi-Fi the router would otherwise forward name lookups
+	# to the internet. (/etc/resolv.conf links here; nothing goes to flash.)
+	: > $T/resolv.conf
+	mount -o bind $T/resolv.conf /etc/jffs2/resolv.conf && echo "emptied /etc/resolv.conf"
+
 	if [ "$STOP_FTP" = 1 ]; then
 		killall tcpsvd && echo "ftp stopped"
 	fi
 } > $LOG 2>&1
 
 # Background jobs run as their own scripts from RAM with no file on the card
-# open. The radio needs ~10 s to come up; do not hold up the boot for it.
-sh -c "sh $T/scripts/ap_start.sh > $T/ap.log 2>&1; cat $T/ap.log >> $LOG" < /dev/null > /dev/null 2>&1 &
+# open. Wi-Fi needs 10-60 s to come up; do not hold up the boot for it.
+sh -c "sh $T/scripts/net_start.sh > $T/net.log 2>&1; cat $T/net.log >> $LOG" < /dev/null > /dev/null 2>&1 &
 sh $T/scripts/watch.sh $BLOCK_INTERNET < /dev/null > /dev/null 2>&1 &
 if [ "$DIAG" = 1 ]; then
 	sh $T/scripts/ps_sampler.sh < /dev/null > /dev/null 2>&1 &

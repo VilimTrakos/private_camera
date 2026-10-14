@@ -1,0 +1,13 @@
+# Kucni Wi-Fi (samo 2,4 GHz). Kamera se spaja na njega, ali NEMA pristup
+# internetu: ne uzima gateway ni DNS od routera, pa vidi samo lokalnu mrezu.
+# Adresu kamere vidis u debug/localcam.log ili u popisu uredaja na routeru.
+# Ako je HOME_SSID prazan, kamera radi svoju mrezu (AP, ispod).
+HOME_SSID=
+HOME_PASSWORD=
+
+# Vlastita mreza kamere: koristi se kad HOME_SSID nije upisan ili se kamera ne
+# uspije spojiti na kucni Wi-Fi. Kamera je tada na http://192.168.10.1/
+# Lozinka: 8 do 63 znaka. Kanal: 1 do 11.
+AP_SSID=Kamera
+AP_PASSWORD=
+AP_CHANNEL=6

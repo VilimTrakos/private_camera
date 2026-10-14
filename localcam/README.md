@@ -4,15 +4,17 @@ Pokreće se sa SD kartice preko `debug` kuke u `/usr/sbin/service.sh`. Flash se 
 
 ## Korištenje
 
-1. U `debug/ap.conf` na kartici upiši ime mreže i lozinku (8–63 znaka). Može i u Notepadu.
-2. Na mobitelu se spoji na tu mrežu i otvori **http://192.168.10.1/**.
+1. U `debug/wifi.conf` na kartici upiši kućni Wi-Fi (`HOME_SSID`, `HOME_PASSWORD`) ili ostavi prazno za vlastitu mrežu kamere (`AP_SSID`, `AP_PASSWORD`). Može i u Notepadu.
+2. Otvori stranicu kamere u browseru na istoj mreži:
+   - kućni Wi-Fi: **http://ADRESA/**, adresu piše u `debug/localcam.log` (redak `net: home Wi-Fi ...`), na serijskoj konzoli ili u popisu uređaja na routeru;
+   - vlastita mreža kamere: spoji mobitel na nju i otvori **http://192.168.10.1/**.
 
 Na stranici su:
 - **↕** okreće sliku naopako, **↔** je zrcali lijevo-desno; oboje se postavlja u kameri, pa vrijedi i za snimke, i pamti se u `debug/image.conf`;
 - **HD** prebacuje između 1280×720 i 640×360;
 - dolje lijevo: kašnjenje u browseru, fps i kbit/s.
 
-Mobitel od kamere ne dobiva gateway ni DNS, pa za internet i dalje koristi mobilne podatke, a kamera nema put van. Stranica kod otvaranja postavi sat kamere prema mobitelu (bez oblaka kamera nema izvor vremena), pa snimke dobiju točno vrijeme.
+Kamera ni na kućnom Wi-Fiju nema put van: `scripts/udhcpc.sh` ne uzima gateway ni DNS od routera, `/etc/resolv.conf` je prazan, a `watch.sh` briše default rutu ako je itko doda. Za dodatnu sigurnost na routeru se može blokirati internet za MAC adresu kamere. U vlastitoj mreži kamere mobitel ne dobiva gateway ni DNS, pa za internet i dalje koristi mobilne podatke. Stranica kod otvaranja postavi sat kamere prema mobitelu (bez oblaka kamera nema izvor vremena), pa snimke dobiju točno vrijeme.
 
 Gasi se izvlačenjem napajanja; karticu vadi tek kad je kamera ugašena.
 
@@ -29,11 +31,11 @@ Sve se prvo kopira u RAM (`/tmp/localcam`) i radi odande. Kad snimanje krene, `a
 | `/usr/sbin/anyka_ipc.sh` | ispis `anyka_ipc` u `/dev/null` (`QUIET=1`), log svakog kraja rada, najviše 4 brza pada zaredom |
 
 Pozadinski poslovi (svi iz RAM-a):
-- `scripts/ap_start.sh` upali Wi-Fi driver (RTL8188FU), `hostapd` i DHCP na `192.168.10.1`;
+- `scripts/net_start.sh` upali Wi-Fi driver (RTL8188FU) i spoji kameru na kućni Wi-Fi bez gatewaya i DNS-a (`scripts/udhcpc.sh`), ili, ako to ne uspije ili nije upisano, digne vlastitu mrežu (`hostapd`, DHCP na `192.168.10.1`);
 - `scripts/watch.sh` briše default rutu (`BLOCK_INTERNET`) i ponovno montira karticu ako nije montirana;
 - `scripts/sdguard.sh` je u PATH-u samo za `anyka_ipc` kao `fuser`, `umount` i `mount`: dok je kartica montirana, njegov `fuser_remount` (`fuser -m -k /mnt`, `umount -lf /mnt`, `mount -t vfat`) ne radi ništa. Bez toga bi se exFAT kartica odmontirala i snimanje bi stalo.
 
-Postavke na vrhu `config.sh`: `QUIET`, `STOP_FTP` (0 = FTP na portu 21 ostaje, dostupan samo uređajima na mreži kamere), `BLOCK_INTERNET`, `DIAG` (popis procesa prije neočekivanog kraja `anyka_ipc`, u `debug/anyka_exit.log`).
+Postavke na vrhu `config.sh`: `QUIET`, `STOP_FTP` (0 = FTP na portu 21 ostaje: pristup cijelom sustavu kamere bez lozinke, za svakoga na istoj mreži; na kućnom Wi-Fiju to je cijela kućna mreža), `BLOCK_INTERNET`, `DIAG` (popis procesa prije neočekivanog kraja `anyka_ipc`, u `debug/anyka_exit.log`).
 
 ## Provjera
 

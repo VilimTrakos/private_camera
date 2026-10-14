@@ -6,9 +6,11 @@ BLOCK_INTERNET=$1
 cd /
 
 while true; do
-	# The wifi scripts add the default route back after every DHCP lease.
+	# Nothing should add a default route or DNS servers (scripts/udhcpc.sh
+	# ignores them), but if something does, take them away again.
 	if [ "$BLOCK_INTERNET" = 1 ]; then
 		route del default 2>/dev/null
+		[ -s /etc/jffs2/resolv.conf ] && : > /etc/jffs2/resolv.conf
 	fi
 	# At startup anyka_ipc remounts the card with "mount -t vfat", which
 	# fails for exFAT cards and leaves it unmounted. Mount it again.
