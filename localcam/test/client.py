@@ -45,8 +45,13 @@ def get(path):
 class Stream:
     """Reads framed H.264 from /stream and validates every frame."""
 
-    def __init__(self, hd):
-        self.sock = socket.create_connection((HOST, PORT), timeout=5)
+    def __init__(self, hd, rcvbuf=None):
+        self.sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        if rcvbuf:
+            # small receive window, so a paused reader really backs up the camera
+            self.sock.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, rcvbuf)
+        self.sock.settimeout(5)
+        self.sock.connect((HOST, PORT))
         self.sock.sendall(f"GET /stream?hd={hd} HTTP/1.1\r\nHost: x\r\n\r\n".encode())
         self.buf = b""
         while b"\r\n\r\n" not in self.buf:
@@ -128,6 +133,31 @@ s = Stream(0)
 s.read_for(2)
 s.close()
 check(bool(s.frames) and all(f[2] < 20000 for f in s.frames), "hd=0 selects the sub stream")
+
+# image orientation
+status, body = get("/image")
+check(status.endswith("200 OK") and b'"flip":0' in body and b'"mirror":0' in body,
+      f"GET /image reports orientation ({body.strip().decode(errors='replace')})")
+status, body = get("/image?flip=1&mirror=0")
+check(b'"flip":1' in body and b'"mirror":0' in body, f"flip=1&mirror=0 applied ({body.strip().decode(errors='replace')})")
+status, body = get("/image?mirror=1")
+check(b'"flip":1' in body and b'"mirror":1' in body, f"mirror=1 keeps flip ({body.strip().decode(errors='replace')})")
+get("/image?flip=0&mirror=0")
+
+# slow link: a reader that stalls must not build up delay; frames are dropped
+# and the stream resumes on a key frame
+time.sleep(2)
+s = Stream(1, rcvbuf=8192)
+s.read_for(1)
+before = len(s.frames)
+time.sleep(4)
+s.read_for(3)
+s.close()
+nums = [f[0] for f in s.frames]
+gaps = [(a, b) for a, b in zip(nums, nums[1:]) if b != a + 1]
+check(before > 0 and bool(gaps), f"stalled reader: frames dropped (gaps {gaps[:3]})")
+check(all(b % 15 == 0 for a, b in gaps), "after each gap the stream resumes on a key frame")
+check(not s.errors, f"payload intact after drops ({s.errors[:3]})")
 
 # viewer limit, then slots are freed after viewers leave
 time.sleep(2)

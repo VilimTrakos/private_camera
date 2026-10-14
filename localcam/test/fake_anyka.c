@@ -84,6 +84,27 @@ static void *stream_send_thread(void *arg)
 	return NULL;
 }
 
+/* Image orientation, exported by the real anyka_ipc (ISP flip/mirror). */
+static int cur_flip, cur_mirror;
+
+int ak_vi_set_flip_mirror(int handle, int flip, int mirror)
+{
+	if (!handle)
+		return -1;
+	cur_flip = flip;
+	cur_mirror = mirror;
+	return 0;
+}
+
+int ak_vi_get_flip_mirror(int handle, int *flip, int *mirror)
+{
+	if (!handle)
+		return -1;
+	*flip = cur_flip;
+	*mirror = cur_mirror;
+	return 0;
+}
+
 int yi_p2p_on_new_session(uint32_t sid)
 {
 	pthread_t t;

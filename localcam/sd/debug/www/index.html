@@ -31,6 +31,8 @@
     background: var(--warn); vertical-align: middle; }
   .live .dot { background: var(--live); }
   .muted { color: var(--muted); }
+  .stats { margin-right: auto; font-size: 13px; font-variant-numeric: tabular-nums; }
+  @media (max-width: 480px) { .stats { display: none; } }
 </style>
 </head>
 <body>
@@ -41,6 +43,9 @@
   <span class="pill muted" id="res"></span>
 </div>
 <div class="bar bottom">
+  <span class="pill muted stats" id="stats"></span>
+  <button id="flip" aria-pressed="false" title="Okreni sliku naopako (vrijedi i za snimke)">↕</button>
+  <button id="mirror" aria-pressed="false" title="Zrcali lijevo-desno (vrijedi i za snimke)">↔</button>
   <button id="hd" aria-pressed="true" title="Glavni stream 1280×720 ili manji 640×360">HD</button>
   <button id="fs" title="Cijeli zaslon">⛶</button>
 </div>
@@ -55,6 +60,10 @@
   const statusText = document.getElementById('status-text');
   const resLabel = document.getElementById('res');
   const hdButton = document.getElementById('hd');
+  const flipButton = document.getElementById('flip');
+  const mirrorButton = document.getElementById('mirror');
+  const statsLabel = document.getElementById('stats');
+  let rxBytes = 0, rxFrames = 0;
 
   let hd = true;
   try { hd = localStorage.getItem('hd') !== '0'; } catch (e) {}
@@ -101,6 +110,8 @@
           if (!(duration > 0 && duration < 1000)) duration = 66;
           lastTs = ts;
           jm.feed({ video: buf.subarray(off + HDR, off + HDR + len), duration });
+          rxBytes += HDR + len;
+          rxFrames++;
           off += HDR + len;
           if (++frames === 1) setStatus('Uživo', true);
         }
@@ -119,9 +130,36 @@
     const b = video.buffered;
     if (!b.length) return;
     const end = b.end(b.length - 1);
-    if (end - video.currentTime > 1.5) video.currentTime = end - 0.3;
+    if (end - video.currentTime > 0.8) video.currentTime = end - 0.15;
     if (video.paused) video.play().catch(() => {});
-  }, 1000);
+  }, 500);
+
+  // Delay inside the browser, frame rate and bit rate, for judging the link.
+  setInterval(() => {
+    const b = video.buffered;
+    const lag = b.length ? Math.max(0, b.end(b.length - 1) - video.currentTime) : 0;
+    statsLabel.textContent = rxFrames
+      ? `buffer ${lag.toFixed(1)} s · ${(rxFrames / 2).toFixed(0)} fps · ${Math.round(rxBytes * 8 / 2000)} kbit/s`
+      : '';
+    rxBytes = rxFrames = 0;
+  }, 2000);
+
+  // Image orientation is set in the camera (ISP), so recordings follow it too.
+  function showImage(s) {
+    flipButton.setAttribute('aria-pressed', String(!!s.flip));
+    mirrorButton.setAttribute('aria-pressed', String(!!s.mirror));
+  }
+  async function setImage(query) {
+    try {
+      const r = await fetch('/image' + query, { cache: 'no-store' });
+      showImage(await r.json());
+    } catch (e) {}
+  }
+  flipButton.addEventListener('click', () =>
+    setImage('?flip=' + (flipButton.getAttribute('aria-pressed') === 'true' ? 0 : 1)));
+  mirrorButton.addEventListener('click', () =>
+    setImage('?mirror=' + (mirrorButton.getAttribute('aria-pressed') === 'true' ? 0 : 1)));
+  setImage('');
 
   hdButton.addEventListener('click', () => {
     hd = !hd;

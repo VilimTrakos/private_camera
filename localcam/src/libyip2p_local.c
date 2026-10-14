@@ -11,6 +11,11 @@
  *   GET /<file>      static file from www/ (player script)
  *   GET /stream      live H.264 (?hd=1 main 1280x720, ?hd=0 sub 640x360)
  *   GET /time?t=MS   set the camera clock from the browser (no internet = no NTP)
+ *   GET /image       image orientation as JSON; ?flip=0|1&mirror=0|1 changes it
+ *
+ * Latency: a frame is dropped (and sending resumes at the next key frame)
+ * whenever the socket still has more than MAX_QUEUED bytes waiting, so a slow
+ * Wi-Fi link drops frames instead of building up seconds of delay.
  *
  * Opening /stream calls yi_p2p_on_new_session(sid) in anyka_ipc. anyka_ipc then
  * starts its own worker_thread and stream_send_thread for that sid, exactly as
@@ -32,6 +37,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/ioctl.h>
 #include <sys/socket.h>
 #include <sys/time.h>
 #include <time.h>
@@ -45,6 +51,10 @@
 #define MAX_CLIENTS      16
 #define RELEASE_WAIT_S   15
 #define FRAME_HDR_LEN    9
+#define STREAM_SNDBUF    (64 * 1024)
+#define MAX_QUEUED       (96 * 1024)	/* ~0.5 s of 720p video */
+#define IMAGE_CONF       "/mnt/debug/image.conf"
+#define VI_HANDLE        100		/* what anyka_ipc itself passes */
 
 /* Same layout as yi_frame_info_t in anyka_ipc (from its debug info). */
 typedef struct {
@@ -63,6 +73,10 @@ typedef struct {
 
 /* Exported by anyka_ipc, resolved when the library is loaded into it. */
 extern int yi_p2p_on_new_session(uint32_t sid);
+/* The handle is only checked for non-zero; anyka_ipc passes 100. The Yi app
+ * setting (yi_p2p_on_set_mirror_flip) always sets both, we set them apart. */
+extern int ak_vi_set_flip_mirror(int handle, int flip, int mirror);
+extern int ak_vi_get_flip_mirror(int handle, int *flip, int *mirror);
 
 enum { S_FREE, S_ALIVE, S_CLOSED, S_RELEASED };
 
@@ -74,12 +88,13 @@ struct session {
 	int hd;
 	int got_key;
 	unsigned long frames;
+	unsigned long dropped;
 };
 
 static struct session sessions[MAX_SESSIONS] = {
-	{ PTHREAD_MUTEX_INITIALIZER, 0, S_FREE, -1, 0, 0, 0 },
-	{ PTHREAD_MUTEX_INITIALIZER, 0, S_FREE, -1, 0, 0, 0 },
-	{ PTHREAD_MUTEX_INITIALIZER, 0, S_FREE, -1, 0, 0, 0 },
+	{ PTHREAD_MUTEX_INITIALIZER, 0, S_FREE, -1, 0, 0, 0, 0 },
+	{ PTHREAD_MUTEX_INITIALIZER, 0, S_FREE, -1, 0, 0, 0, 0 },
+	{ PTHREAD_MUTEX_INITIALIZER, 0, S_FREE, -1, 0, 0, 0, 0 },
 };
 static pthread_mutex_t alloc_lock = PTHREAD_MUTEX_INITIALIZER;
 static uint32_t next_sid = 1000;
@@ -155,6 +170,7 @@ static struct session *session_alloc(int fd, int hd)
 			s->hd = hd;
 			s->got_key = 0;
 			s->frames = 0;
+			s->dropped = 0;
 			pthread_mutex_unlock(&s->lock);
 			break;
 		}
@@ -212,6 +228,16 @@ static void set_timeout(int fd, int optname, int seconds)
 	tv.tv_sec = seconds;
 	tv.tv_usec = 0;
 	setsockopt(fd, SOL_SOCKET, optname, &tv, sizeof(tv));
+}
+
+/* Bytes sent but not yet acknowledged by the browser. */
+static int queued_bytes(int fd)
+{
+	int n = 0;
+
+	if (ioctl(fd, TIOCOUTQ, &n) < 0)
+		return 0;
+	return n;
 }
 
 static void put_be32(unsigned char *p, uint32_t v)
@@ -333,14 +359,102 @@ static void handle_time(int fd, const char *query)
 	send_status(fd, "200 OK", "ok\n");
 }
 
+/* ---------- image orientation ---------- */
+
+static int image_flip = -1, image_mirror = -1;	/* -1: leave as anyka_ipc set it */
+
+static void image_apply(void)
+{
+	int flip = 0, mirror = 0;
+
+	if (image_flip < 0 && image_mirror < 0)
+		return;
+	ak_vi_get_flip_mirror(VI_HANDLE, &flip, &mirror);
+	if (image_flip >= 0)
+		flip = image_flip;
+	if (image_mirror >= 0)
+		mirror = image_mirror;
+	ak_vi_set_flip_mirror(VI_HANDLE, flip, mirror);
+}
+
+/* anyka_ipc sets both from its own config at startup; re-apply ours after it. */
+static void image_load(void)
+{
+	char buf[64] = "";
+	char *p;
+	ssize_t n;
+	int f;
+
+	f = open(IMAGE_CONF, O_RDONLY);
+	if (f < 0)
+		return;
+	n = read(f, buf, sizeof(buf) - 1);
+	close(f);
+	buf[n > 0 ? n : 0] = '\0';
+	if ((p = strstr(buf, "FLIP=")))
+		image_flip = atoi(p + 5) ? 1 : 0;
+	if ((p = strstr(buf, "MIRROR=")))
+		image_mirror = atoi(p + 7) ? 1 : 0;
+	image_apply();
+	logmsg("image: flip %d, mirror %d (from %s)\n", image_flip, image_mirror, IMAGE_CONF);
+}
+
+/* Keep our orientation in case anyka_ipc resets it (it does at startup). */
+static void *image_keeper(void *arg)
+{
+	(void)arg;
+	for (;;) {
+		sleep(60);
+		image_apply();
+	}
+	return NULL;
+}
+
+static void image_save(void)
+{
+	char buf[64];
+	int f;
+
+	f = open(IMAGE_CONF, O_WRONLY | O_CREAT | O_TRUNC, 0644);
+	if (f < 0)
+		return;
+	snprintf(buf, sizeof(buf), "FLIP=%d\nMIRROR=%d\n", image_flip > 0, image_mirror > 0);
+	write(f, buf, strlen(buf));
+	close(f);
+}
+
+static void handle_image(int fd, const char *query)
+{
+	const char *p;
+	char body[64];
+	int flip = 0, mirror = 0;
+
+	if (query && (strstr(query, "flip=") || strstr(query, "mirror="))) {
+		if ((p = strstr(query, "flip=")))
+			image_flip = p[5] == '1';
+		if ((p = strstr(query, "mirror=")))
+			image_mirror = p[7] == '1';
+		image_apply();
+		image_save();
+		logmsg("image: flip %d, mirror %d (set from browser)\n", image_flip, image_mirror);
+	}
+	ak_vi_get_flip_mirror(VI_HANDLE, &flip, &mirror);
+	snprintf(body, sizeof(body), "{\"flip\":%d,\"mirror\":%d}\n", flip ? 1 : 0, mirror ? 1 : 0);
+	send_status(fd, "200 OK", body);
+}
+
 static void handle_stream(int fd, const char *query)
 {
 	struct session *s;
 	char buf[256];
 	int hd = !(query && strstr(query, "hd=0"));
+	int sndbuf = STREAM_SNDBUF;
 	int waited;
 	ssize_t r;
 
+	/* A small send buffer keeps queued_bytes() meaningful. */
+	setsockopt(fd, SOL_SOCKET, SO_SNDBUF, &sndbuf, sizeof(sndbuf));
+	image_apply();
 	s = session_alloc(fd, hd);
 	if (!s) {
 		send_status(fd, "503 Service Unavailable", "too many viewers\n");
@@ -370,7 +484,8 @@ static void handle_stream(int fd, const char *query)
 	/* Wait for anyka_ipc's worker_thread to call yi_p2p_release_session(). */
 	for (waited = 0; s->state != S_RELEASED && waited < RELEASE_WAIT_S * 10; waited++)
 		usleep(100000);
-	logmsg("sid %u: viewer left after %lu frames\n", (unsigned)s->sid, s->frames);
+	logmsg("sid %u: viewer left after %lu frames (%lu dropped on a slow link)\n",
+	       (unsigned)s->sid, s->frames, s->dropped);
 	session_free(s);
 }
 
@@ -409,6 +524,8 @@ static void *client_thread(void *arg)
 		serve_file(fd, "index.html");
 	else if (!strcmp(path, "/stream"))
 		handle_stream(fd, query);
+	else if (!strcmp(path, "/image"))
+		handle_image(fd, query);
 	else if (!strcmp(path, "/time"))
 		handle_time(fd, query);
 	else if (path[0] == '/')
@@ -459,6 +576,9 @@ static void *server_thread(void *arg)
 		return NULL;
 	}
 	logmsg("web UI on port %d, files from %s\n", port, www_dir);
+	image_load();
+	if (pthread_create(&t, NULL, image_keeper, NULL) == 0)
+		pthread_detach(t);
 
 	for (;;) {
 		fd = accept(lfd, NULL, NULL);
@@ -512,6 +632,7 @@ int yi_p2p_send_frame_data(uint32_t sid, yi_frame_info_t *info, void *buf, int l
 {
 	struct session *s = session_find(sid);
 	unsigned char hdr[FRAME_HDR_LEN];
+	int queued;
 
 	if (!s || !info || !buf || len <= 0 || !info->is_video)
 		return 0;
@@ -521,6 +642,16 @@ int yi_p2p_send_frame_data(uint32_t sid, yi_frame_info_t *info, void *buf, int l
 	/* A browser decoder can only start on a key frame (it carries SPS/PPS). */
 	if (!s->got_key && !info->is_iframe)
 		goto out;
+	/* Slow link: if this frame would not fit under MAX_QUEUED, drop it and
+	 * the rest until the next key frame, instead of blocking anyka_ipc's
+	 * sending thread and letting the delay grow. An empty queue always
+	 * takes the frame, so large key frames still get through. */
+	queued = queued_bytes(s->fd);
+	if (queued > 0 && queued + FRAME_HDR_LEN + len > MAX_QUEUED) {
+		s->got_key = 0;
+		s->dropped++;
+		goto out;
+	}
 	s->got_key = 1;
 	put_be32(hdr, (uint32_t)len);
 	put_be32(hdr + 4, info->ts);
