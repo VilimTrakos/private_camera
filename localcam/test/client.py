@@ -149,6 +149,17 @@ status, body = get("/image?mirror=1")
 check(b'"flip":1' in body and b'"mirror":1' in body, f"mirror=1 keeps flip ({body.strip().decode(errors='replace')})")
 get("/image?flip=0&mirror=0")
 
+# night vision and white light
+status, body = get("/light")
+check(status.endswith("200 OK") and b'"ir":"auto"' in body, f"GET /light defaults to IR auto ({body.strip().decode(errors='replace')})")
+status, body = get("/light?ir=on")
+check(b'"ir":"on"' in body, f"ir=on applied ({body.strip().decode(errors='replace')})")
+status, body = get("/light?ir=off&white=1")
+check(b'"ir":"off"' in body and b'"white":1' in body, f"ir=off&white=1 applied ({body.strip().decode(errors='replace')})")
+status, body = get("/light?ir=bogus")
+check(b'"ir":"off"' in body, "unknown IR mode ignored")
+get("/light?ir=auto&white=0")
+
 # slow link: a reader that stalls must not build up delay; frames are dropped
 # and the stream resumes on a key frame
 time.sleep(2)

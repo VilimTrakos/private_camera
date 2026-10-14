@@ -44,6 +44,8 @@
 </div>
 <div class="bar bottom">
   <span class="pill muted stats" id="stats"></span>
+  <button id="ir" title="Noćni vid (infracrvene lampice): automatski, uvijek uključen ili isključen">IR auto</button>
+  <button id="white" aria-pressed="false" title="Bijelo svjetlo">💡</button>
   <button id="flip" aria-pressed="false" title="Okreni sliku naopako (vrijedi i za snimke)">↕</button>
   <button id="mirror" aria-pressed="false" title="Zrcali lijevo-desno (vrijedi i za snimke)">↔</button>
   <button id="hd" aria-pressed="true" title="Glavni stream 1280×720 ili manji 640×360">HD</button>
@@ -160,6 +162,29 @@
   mirrorButton.addEventListener('click', () =>
     setImage('?mirror=' + (mirrorButton.getAttribute('aria-pressed') === 'true' ? 0 : 1)));
   setImage('');
+
+  // Night vision (IR LEDs + IR-cut filter) and the white light.
+  const irButton = document.getElementById('ir');
+  const whiteButton = document.getElementById('white');
+  const irNext = { auto: 'on', on: 'off', off: 'auto' };
+  const irLabel = { auto: 'IR auto', on: 'IR uklj.', off: 'IR isklj.' };
+  let irMode = 'auto';
+  function showLight(s) {
+    irMode = s.ir in irLabel ? s.ir : 'auto';
+    irButton.textContent = irLabel[irMode];
+    irButton.setAttribute('aria-pressed', String(irMode === 'on'));
+    whiteButton.setAttribute('aria-pressed', String(!!s.white));
+  }
+  async function setLight(query) {
+    try {
+      const r = await fetch('/light' + query, { cache: 'no-store' });
+      showLight(await r.json());
+    } catch (e) {}
+  }
+  irButton.addEventListener('click', () => setLight('?ir=' + irNext[irMode]));
+  whiteButton.addEventListener('click', () =>
+    setLight('?white=' + (whiteButton.getAttribute('aria-pressed') === 'true' ? 0 : 1)));
+  setLight('');
 
   hdButton.addEventListener('click', () => {
     hd = !hd;

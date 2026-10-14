@@ -105,6 +105,12 @@ int ak_vi_get_flip_mirror(int handle, int *flip, int *mirror)
 	return 0;
 }
 
+/* Night vision mode (anyka_ipc's photosensitive switch): 0 night, 1 day, 2 auto. */
+int ak_misc_photosensitive_set_status_ex(int mode)
+{
+	return mode >= 0 && mode <= 2 ? 0 : -1;
+}
+
 int yi_p2p_on_new_session(uint32_t sid)
 {
 	pthread_t t;

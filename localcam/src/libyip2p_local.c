@@ -12,6 +12,7 @@
  *   GET /stream      live H.264 (?hd=1 main 1280x720, ?hd=0 sub 640x360)
  *   GET /time?t=MS   set the camera clock from the browser (no internet = no NTP)
  *   GET /image       image orientation as JSON; ?flip=0|1&mirror=0|1 changes it
+ *   GET /light       night vision and white light; ?ir=auto|on|off&white=0|1
  *   GET /status      read-only diagnostics: routes, DNS, Wi-Fi link, mounts, viewers
  *
  * Latency: a frame is dropped (and sending resumes at the next key frame)
@@ -54,7 +55,9 @@
 #define FRAME_HDR_LEN    9
 #define STREAM_SNDBUF    (256 * 1024)
 #define MAX_QUEUED       (256 * 1024)	/* a few HD key frames; ~1-2 s on a slow link */
-#define IMAGE_CONF       "/mnt/debug/image.conf"
+#define CAMERA_CONF      "/mnt/debug/camera.conf"
+#define HW_CONF          "/etc/jffs2/hw.conf"
+#define WHITE_LED        "/sys/user-gpio/WHITE_LED"
 #define VI_HANDLE        100		/* what anyka_ipc itself passes */
 
 /* Same layout as yi_frame_info_t in anyka_ipc (from its debug info). */
@@ -78,6 +81,8 @@ extern int yi_p2p_on_new_session(uint32_t sid);
  * setting (yi_p2p_on_set_mirror_flip) always sets both, we set them apart. */
 extern int ak_vi_set_flip_mirror(int handle, int flip, int mirror);
 extern int ak_vi_get_flip_mirror(int handle, int *flip, int *mirror);
+/* 0 = night (IR on), 1 = day (IR off), 2 = automatic; anyka_ipc never calls it itself. */
+extern int ak_misc_photosensitive_set_status_ex(int mode);
 
 enum { S_FREE, S_ALIVE, S_CLOSED, S_RELEASED };
 
@@ -362,9 +367,17 @@ static void handle_time(int fd, const char *query)
 	send_status(fd, "200 OK", "ok\n");
 }
 
-/* ---------- image orientation ---------- */
+/* ---------- camera settings: orientation, night vision, white light ---------- */
 
-static int image_flip = -1, image_mirror = -1;	/* -1: leave as anyka_ipc set it */
+/* -1: leave it as anyka_ipc set it. Chosen values are kept in CAMERA_CONF. */
+static int image_flip = -1, image_mirror = -1;
+static int ir_mode = -1;	/* one of IR_ON, IR_OFF, IR_AUTO */
+static int white_light = -1;
+static int ir_pending;		/* anyka_ipc's day/night thread was not running yet */
+
+/* anyka_ipc's day_night_switch_mode: NIGHT = IR on, DAY = IR off, AUTO = light sensor */
+enum { IR_ON = 0, IR_OFF = 1, IR_AUTO = 2 };
+static const char *const ir_names[] = { "on", "off", "auto" };
 
 static void image_apply(void)
 {
@@ -380,15 +393,57 @@ static void image_apply(void)
 	ak_vi_set_flip_mirror(VI_HANDLE, flip, mirror);
 }
 
-/* anyka_ipc sets both from its own config at startup; re-apply ours after it. */
-static void image_load(void)
+static void ir_apply(void)
 {
-	char buf[64] = "";
+	if (ir_mode < 0)
+		return;
+	ir_pending = ak_misc_photosensitive_set_status_ex(ir_mode) != 0;
+}
+
+/* hw.conf byte 24 says whether the LED is wired inverted (as service.sh reads it). */
+static void white_apply(void)
+{
+	char hw[64] = "";
+	char level;
+	ssize_t n;
+	int f, inverted;
+
+	if (white_light < 0)
+		return;
+	f = open(HW_CONF, O_RDONLY);
+	if (f >= 0) {
+		n = read(f, hw, sizeof(hw) - 1);
+		close(f);
+		hw[n > 0 ? n : 0] = '\0';
+	}
+	inverted = strlen(hw) >= 24 && hw[23] == '1';
+	level = (white_light ^ inverted) ? '1' : '0';
+	f = open(WHITE_LED, O_WRONLY);
+	if (f >= 0) {
+		write(f, &level, 1);
+		close(f);
+	}
+}
+
+static int ir_from_name(const char *v)
+{
+	int i;
+
+	for (i = 0; i < 3; i++)
+		if (!strncmp(v, ir_names[i], strlen(ir_names[i])))
+			return i;
+	return -1;
+}
+
+/* anyka_ipc applies its own orientation at startup; apply ours after it. */
+static void settings_load(void)
+{
+	char buf[128] = "";
 	char *p;
 	ssize_t n;
 	int f;
 
-	f = open(IMAGE_CONF, O_RDONLY);
+	f = open(CAMERA_CONF, O_RDONLY);
 	if (f < 0)
 		return;
 	n = read(f, buf, sizeof(buf) - 1);
@@ -398,32 +453,50 @@ static void image_load(void)
 		image_flip = atoi(p + 5) ? 1 : 0;
 	if ((p = strstr(buf, "MIRROR=")))
 		image_mirror = atoi(p + 7) ? 1 : 0;
+	if ((p = strstr(buf, "IR=")))
+		ir_mode = ir_from_name(p + 3);
+	if ((p = strstr(buf, "WHITE=")))
+		white_light = atoi(p + 6) ? 1 : 0;
 	image_apply();
-	logmsg("image: flip %d, mirror %d (from %s)\n", image_flip, image_mirror, IMAGE_CONF);
+	ir_apply();
+	white_apply();
+	logmsg("settings from %s: flip %d, mirror %d, ir %s, white light %d\n", CAMERA_CONF,
+	       image_flip, image_mirror, ir_mode >= 0 ? ir_names[ir_mode] : "-", white_light);
 }
 
-/* Keep our orientation in case anyka_ipc resets it (it does at startup). */
-static void *image_keeper(void *arg)
+static void settings_save(void)
+{
+	char buf[128];
+	size_t pos = 0;
+	int f;
+
+	if (image_flip >= 0)
+		pos += snprintf(buf + pos, sizeof(buf) - pos, "FLIP=%d\n", image_flip);
+	if (image_mirror >= 0)
+		pos += snprintf(buf + pos, sizeof(buf) - pos, "MIRROR=%d\n", image_mirror);
+	if (ir_mode >= 0)
+		pos += snprintf(buf + pos, sizeof(buf) - pos, "IR=%s\n", ir_names[ir_mode]);
+	if (white_light >= 0)
+		pos += snprintf(buf + pos, sizeof(buf) - pos, "WHITE=%d\n", white_light);
+	f = open(CAMERA_CONF, O_WRONLY | O_CREAT | O_TRUNC, 0644);
+	if (f < 0)
+		return;
+	write(f, buf, pos);
+	close(f);
+}
+
+/* Keep our settings in case anyka_ipc resets them (it does at startup). */
+static void *settings_keeper(void *arg)
 {
 	(void)arg;
 	for (;;) {
 		sleep(60);
 		image_apply();
+		white_apply();
+		if (ir_pending)
+			ir_apply();
 	}
 	return NULL;
-}
-
-static void image_save(void)
-{
-	char buf[64];
-	int f;
-
-	f = open(IMAGE_CONF, O_WRONLY | O_CREAT | O_TRUNC, 0644);
-	if (f < 0)
-		return;
-	snprintf(buf, sizeof(buf), "FLIP=%d\nMIRROR=%d\n", image_flip > 0, image_mirror > 0);
-	write(f, buf, strlen(buf));
-	close(f);
 }
 
 static void handle_image(int fd, const char *query)
@@ -438,11 +511,34 @@ static void handle_image(int fd, const char *query)
 		if ((p = strstr(query, "mirror=")))
 			image_mirror = p[7] == '1';
 		image_apply();
-		image_save();
+		settings_save();
 		logmsg("image: flip %d, mirror %d (set from browser)\n", image_flip, image_mirror);
 	}
 	ak_vi_get_flip_mirror(VI_HANDLE, &flip, &mirror);
 	snprintf(body, sizeof(body), "{\"flip\":%d,\"mirror\":%d}\n", flip ? 1 : 0, mirror ? 1 : 0);
+	send_status(fd, "200 OK", body);
+}
+
+static void handle_light(int fd, const char *query)
+{
+	const char *p;
+	char body[64];
+	int mode;
+
+	if (query && (p = strstr(query, "ir=")) && (mode = ir_from_name(p + 3)) >= 0) {
+		ir_mode = mode;
+		ir_apply();
+		settings_save();
+		logmsg("night vision: IR %s (set from browser)\n", ir_names[ir_mode]);
+	}
+	if (query && (p = strstr(query, "white="))) {
+		white_light = p[6] == '1';
+		white_apply();
+		settings_save();
+		logmsg("white light: %d (set from browser)\n", white_light);
+	}
+	snprintf(body, sizeof(body), "{\"ir\":\"%s\",\"white\":%d}\n",
+		 ir_names[ir_mode >= 0 ? ir_mode : IR_AUTO], white_light > 0);
 	send_status(fd, "200 OK", body);
 }
 
@@ -580,6 +676,8 @@ static void *client_thread(void *arg)
 		handle_stream(fd, query);
 	else if (!strcmp(path, "/status"))
 		handle_status(fd);
+	else if (!strcmp(path, "/light"))
+		handle_light(fd, query);
 	else if (!strcmp(path, "/image"))
 		handle_image(fd, query);
 	else if (!strcmp(path, "/time"))
@@ -632,8 +730,8 @@ static void *server_thread(void *arg)
 		return NULL;
 	}
 	logmsg("web UI on port %d, files from %s\n", port, www_dir);
-	image_load();
-	if (pthread_create(&t, NULL, image_keeper, NULL) == 0)
+	settings_load();
+	if (pthread_create(&t, NULL, settings_keeper, NULL) == 0)
 		pthread_detach(t);
 
 	for (;;) {
