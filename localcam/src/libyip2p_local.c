@@ -88,17 +88,41 @@ static const char *www_dir = DEFAULT_WWW;
 
 static void logmsg(const char *fmt, ...) __attribute__((format(printf, 1, 2)));
 
+/*
+ * anyka_ipc's own output is sent to /dev/null (see sd/debug/scripts), so our
+ * few messages go to the serial console and to a small file in RAM.
+ */
+#define LOG_FILE  "/tmp/localcam.log"
+#define LOG_LIMIT (64 * 1024)
+
 static void logmsg(const char *fmt, ...)
 {
+	static int console = -2;
 	char buf[256];
 	va_list ap;
-	int n;
+	int n, f;
 
 	n = snprintf(buf, sizeof(buf), "[localcam] ");
 	va_start(ap, fmt);
 	vsnprintf(buf + n, sizeof(buf) - n, fmt, ap);
 	va_end(ap);
-	write(2, buf, strlen(buf));
+	n = strlen(buf);
+
+	if (console == -2)
+		console = getenv("LOCALCAM_FORCE") ? 2 : open("/dev/console", O_WRONLY | O_NOCTTY);
+	if (console >= 0)
+		write(console, buf, n);
+	f = open(LOG_FILE, O_WRONLY | O_CREAT | O_APPEND, 0644);
+	if (f >= 0) {
+		if (lseek(f, 0, SEEK_END) > LOG_LIMIT) {
+			close(f);
+			f = open(LOG_FILE, O_WRONLY | O_CREAT | O_TRUNC, 0644);
+		}
+		if (f >= 0) {
+			write(f, buf, n);
+			close(f);
+		}
+	}
 }
 
 /* ---------- sessions ---------- */

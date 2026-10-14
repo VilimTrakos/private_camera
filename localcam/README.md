@@ -1,33 +1,39 @@
-# localcam: kamera bez Yi oblaka, s lokalnim web prikazom
+# localcam: kamera bez Yi oblaka, s vlastitom Wi-Fi mrežom i prikazom uživo
 
-Pokreće se sa SD kartice preko `debug` kuke u `/usr/sbin/service.sh`. Flash se ne mijenja.
+Pokreće se sa SD kartice preko `debug` kuke u `/usr/sbin/service.sh`. Flash se ne mijenja: kad izvadiš karticu (ili preimenuješ mapu `debug`), kamera je opet originalna.
 
-## Što radi
+## Korištenje
 
-Kad pri paljenju na kartici postoji mapa `debug`, kamera pokrene `debug/config.sh` prije nego što pokrene `daemon` i `anyka_ipc`. Skripta preko `mount -o bind` podmetne:
+1. U `debug/ap.conf` na kartici upiši ime mreže i lozinku (8–63 znaka). Može i u Notepadu.
+2. Na mobitelu se spoji na tu mrežu i otvori **http://192.168.10.1/**.
 
-| Original | Zamjena | Učinak |
-|---|---|---|
-| `/usr/lib/libYiP2P.so` | `lib/libYiP2P.so` | nema P2P veze s oblakom; umjesto toga web server na portu 80 |
-| `/usr/lib/liboss.so` | `lib/liboss.so` | nema slanja snimki i slika u oblak |
-| `/usr/lib/libcloudapi.so` | `lib/libcloudapi.so` | nema updatea, izvještaja ni AP uparivanja |
-| `/usr/bin/cloudAPI` | `cloudAPI` | svi Yi web API pozivi (prijava, vrijeme, bindkey...) odmah vraćaju grešku |
+Mobitel od kamere ne dobiva gateway ni DNS. Zato za internet i dalje koristi mobilne podatke, a kamera nema nikakav put van. Android će javiti "nema interneta"; ostani spojen.
 
-Osim toga, svakih 5 s briše default rutu, pa kamera ne može izaći na internet, a lokalna mreža i dalje radi. Gasi i otvoreni FTP na portu 21. Oboje se može isključiti na vrhu `config.sh` (`BLOCK_INTERNET`, `STOP_FTP`).
+Stranica kod otvaranja postavi sat kamere prema mobitelu (bez oblaka kamera nema izvor vremena), pa snimke na SD-u dobiju točno vrijeme.
+
+## Što config.sh radi pri paljenju
+
+| Zamjena (`mount -o bind`) | Zašto |
+|---|---|
+| `/usr/lib/libYiP2P.so` → `lib/libYiP2P.so` | nema P2P veze s oblakom; umjesto toga web server na portu 80 |
+| `/usr/lib/liboss.so`, `/usr/lib/libcloudapi.so` → stubovi | nema slanja snimki, updatea ni izvještaja |
+| `/usr/bin/cloudAPI` → `cloudAPI` | svi Yi web API pozivi odmah vraćaju grešku |
+| `wifi_manage.sh`, `wifi_station.sh`, `wifi_driver.sh`, `wifi_run.sh`, `eth_manage.sh`, `ap.sh`, `wifi_ap.sh`, `update.sh` → `scripts/noop.sh` | `anyka_ipc` više ne traži staru mrežu i ne restarta radio svake 2 minute (to je bio spam i to bi srušilo AP) |
+| `/usr/sbin/anyka_ipc.sh` → `scripts/anyka_ipc.sh` | ispis `anyka_ipc` ide u `/dev/null` (`QUIET=1`) |
+
+Zatim u pozadini `scripts/ap_start.sh` upali Wi-Fi driver (RTL8188FU), `hostapd` i DHCP na `192.168.10.1`. Konfiguracija ide u `/tmp`, ništa se ne piše u flash.
+
+Postavke na vrhu `config.sh`:
+- `QUIET` (1 = bez spama na konzoli)
+- `STOP_FTP` (0 = FTP na portu 21 ostaje; dostupan je samo uređajima na mreži kamere)
+- `BLOCK_INTERNET` (briše default rutu svakih 5 s)
 
 `anyka_ipc` ostaje originalan, pa snimanje na SD (`/mnt/record`), detekcija pokreta i noćni način rade kao prije.
 
-## Postavljanje
+## Provjera
 
-1. MicroSD kartica u FAT32. Kopiraj mapu `sd/debug` na karticu, tako da na kartici bude `debug/config.sh`.
-2. Kartica u kameru, upali kameru.
-3. Nakon ~30 s otvori `http://IP-kamere/` u browseru na istoj mreži.
-
-Stranica kod otvaranja postavi sat kamere prema browseru (bez oblaka kamera nema izvor vremena), pa snimke dobiju točno vrijeme.
-
-Provjera: na kartici se pojavi `debug/localcam.log` s popisom zamijenjenih datoteka. U serijskoj konzoli se vide redovi `[localcam] ...`.
-
-Povratak na original: izvadi karticu ili preimenuj mapu `debug`, pa ponovno upali kameru.
+- `debug/localcam.log` na kartici: što je zamijenjeno i je li AP podignut.
+- Serijska konzola: redovi `[localcam] ...` (web server, gledatelji). Isto je i u `/tmp/localcam.log`.
 
 ## Build i test
 
@@ -36,13 +42,15 @@ Povratak na original: izvadi karticu ili preimenuj mapu `debug`, pa ponovno upal
 ./test/run_test.sh  # pokreće libYiP2P.so pod qemu s kamerinim uClibc-om i testira HTTP
 ```
 
-## Kako to radi
+## Kako prikaz uživo radi
 
-`anyka_ipc` je povezan s Yi bibliotekama u oba smjera: on poziva `yi_p2p_*`, a biblioteka njega poziva preko `yi_p2p_on_*` funkcija. Kad browser otvori `/stream`, zamjenski `libYiP2P.so` pozove `yi_p2p_on_new_session(sid)`. To je isti poziv koji bi stigao od Yi aplikacije. `anyka_ipc` tada sam pokrene `worker_thread` i `stream_send_thread` i šalje H.264 frameove kroz `yi_p2p_send_frame_data()`, a biblioteka ih prosljeđuje browseru. Browser ih reproducira pomoću `jmuxer.min.js` (MIT, lokalna kopija).
+`anyka_ipc` je povezan s Yi bibliotekama u oba smjera: on poziva `yi_p2p_*`, a biblioteka njega poziva preko `yi_p2p_on_*` funkcija. Kad browser otvori `/stream`, zamjenski `libYiP2P.so` pozove `yi_p2p_on_new_session(sid)`. To je isti poziv koji bi stigao od Yi aplikacije. `anyka_ipc` tada sam šalje H.264 frameove kroz `yi_p2p_send_frame_data()`, a biblioteka ih prosljeđuje browseru. Browser ih reproducira pomoću `jmuxer.min.js` (MIT, lokalna kopija).
 
 ## Nije provjereno na kameri
 
+- Podizanje AP-a na ovom primjerku RTL8188FU.
 - Je li 20 s dovoljno da `anyka_ipc` pokrene enkoder prije prvog gledatelja (`START_DELAY_S`).
 - Kašnjenje i opterećenje procesora kod 720p.
-- Kamera se mora spojiti na Wi-Fi (`[wireless]` u `/etc/jffs2/anyka_cfg.ini`). Trenutno ne nalazi spremljenu mrežu.
-- Nema lozinke na web stranici: vidi je svatko u lokalnoj mreži.
+- LED možda i dalje trepće kao da se spaja na mrežu.
+
+Ako se `wlan0` ne pojavi, `anyka_ipc` nakon ~1 minute restarta kameru (njegova provjera mrežne kartice). U tom slučaju izvadi karticu.
