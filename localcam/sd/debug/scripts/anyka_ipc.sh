@@ -8,6 +8,11 @@ start()
 {
 	if [ -z "$(pgrep anyka_ipc)" ]; then
 		source /etc/jffs2/time_zone.sh
+		# Debugging: if anyka_ipc crashes, keep up to two core dumps on the
+		# SD card (service.sh sets core_pattern to /mnt/core_%e_%p_%t).
+		if [ "$OUT" != /dev/null ] && [ "$(ls /mnt/core_* 2>/dev/null | wc -l)" -lt 2 ]; then
+			ulimit -c unlimited
+		fi
 		if [ "$OUT" = /dev/null ]; then
 			anyka_ipc > /dev/null 2>&1 &
 		else

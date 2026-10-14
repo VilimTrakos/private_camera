@@ -10,7 +10,7 @@ LOG=$D/localcam.log
 
 # 1 = anyka_ipc's console output is discarded (no log spam on the serial
 #     console); 0 = keep it, for debugging.
-QUIET=1
+QUIET=0
 # 1 = stop the FTP server that rc.local starts on port 21 (root, no password).
 STOP_FTP=0
 # 1 = keep deleting the default route, so nothing can reach the internet even

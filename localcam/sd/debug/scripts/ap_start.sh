@@ -10,7 +10,9 @@ T=/tmp/localcam
 IP=192.168.10.1
 mkdir -p $T
 
-conf() { sed -n "s/^$1=//p" $D/ap.conf | tr -d '\r' | head -n 1; }
+# The camera's busybox has no `tr`; strip Windows line endings with sed.
+CR=$(printf '\r')
+conf() { sed -n "s/^$1=//p" $D/ap.conf | sed "s/$CR\$//" | head -n 1; }
 SSID=$(conf SSID)
 PASS=$(conf PASSWORD)
 CHANNEL=$(conf CHANNEL)
