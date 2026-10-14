@@ -134,6 +134,11 @@ s.read_for(2)
 s.close()
 check(bool(s.frames) and all(f[2] < 20000 for f in s.frames), "hd=0 selects the sub stream")
 
+# read-only diagnostics
+status, body = get("/status")
+check(status.endswith("200 OK") and b"--- routes" in body and b"--- viewers" in body,
+      f"GET /status lists routes and viewers ({len(body)} bytes)")
+
 # image orientation
 status, body = get("/image")
 check(status.endswith("200 OK") and b'"flip":0' in body and b'"mirror":0' in body,

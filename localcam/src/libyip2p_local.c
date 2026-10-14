@@ -12,6 +12,7 @@
  *   GET /stream      live H.264 (?hd=1 main 1280x720, ?hd=0 sub 640x360)
  *   GET /time?t=MS   set the camera clock from the browser (no internet = no NTP)
  *   GET /image       image orientation as JSON; ?flip=0|1&mirror=0|1 changes it
+ *   GET /status      read-only diagnostics: routes, DNS, Wi-Fi link, mounts, viewers
  *
  * Latency: a frame is dropped (and sending resumes at the next key frame)
  * whenever the socket still has more than MAX_QUEUED bytes waiting, so a slow
@@ -445,6 +446,49 @@ static void handle_image(int fd, const char *query)
 	send_status(fd, "200 OK", body);
 }
 
+/* ---------- diagnostics ---------- */
+
+static size_t append_file(char *buf, size_t pos, size_t size, const char *title, const char *path)
+{
+	ssize_t n;
+	int f;
+
+	pos += snprintf(buf + pos, size - pos, "--- %s\n", title);
+	if (pos >= size - 1)
+		return size - 1;
+	f = open(path, O_RDONLY);
+	if (f < 0)
+		return pos + snprintf(buf + pos, size - pos, "(cannot read %s)\n", path);
+	while (pos < size - 1 && (n = read(f, buf + pos, size - 1 - pos)) > 0)
+		pos += n;
+	close(f);
+	return pos < size - 1 ? pos : size - 1;
+}
+
+/* Read-only: lets the network side confirm there is no route out. */
+static void handle_status(int fd)
+{
+	char buf[8192];
+	size_t pos = 0, size = sizeof(buf);
+	int i;
+
+	pos = append_file(buf, pos, size, "uptime", "/proc/uptime");
+	pos = append_file(buf, pos, size, "routes (a default route has Destination 00000000)", "/proc/net/route");
+	pos = append_file(buf, pos, size, "DNS servers (/etc/resolv.conf, should be empty)", "/etc/resolv.conf");
+	pos = append_file(buf, pos, size, "Wi-Fi link", "/proc/net/wireless");
+	pos = append_file(buf, pos, size, "mounts", "/proc/mounts");
+	pos += snprintf(buf + pos, size - pos, "--- viewers\n");
+	for (i = 0; i < MAX_SESSIONS && pos < size - 1; i++) {
+		struct session *s = &sessions[i];
+
+		if (s->sid)
+			pos += snprintf(buf + pos, size - pos, "sid %u %s: %lu frames, %lu dropped, limit %d bytes\n",
+					(unsigned)s->sid, s->hd ? "HD" : "SD", s->frames, s->dropped, s->limit);
+	}
+	buf[pos < size ? pos : size - 1] = '\0';
+	send_status(fd, "200 OK", buf);
+}
+
 static void handle_stream(int fd, const char *query)
 {
 	struct session *s;
@@ -534,6 +578,8 @@ static void *client_thread(void *arg)
 		serve_file(fd, "index.html");
 	else if (!strcmp(path, "/stream"))
 		handle_stream(fd, query);
+	else if (!strcmp(path, "/status"))
+		handle_status(fd);
 	else if (!strcmp(path, "/image"))
 		handle_image(fd, query);
 	else if (!strcmp(path, "/time"))
