@@ -37,7 +37,7 @@
 #include <time.h>
 #include <unistd.h>
 
-#define DEFAULT_WWW      "/mnt/debug/www"
+#define DEFAULT_WWW      "/tmp/localcam/www"	/* copied from the SD card by config.sh */
 #define DEFAULT_PORT     80
 #define FALLBACK_PORT    8080
 #define START_DELAY_S    20      /* let anyka_ipc start its encoder first */
