@@ -62,7 +62,16 @@ start_home()
 	until wpa_cli -i wlan0 status 2>/dev/null | grep -q "wpa_state=COMPLETED"; do
 		i=$((i + 1))
 		if [ $i -gt 30 ]; then
-			say "could not join \"$HOME_SSID\" (wrong password, out of range or 5 GHz only?)"
+			# SCANNING = network not seen; 4WAY_HANDSHAKE/DISCONNECTED after
+			# seeing it usually means a wrong password.
+			say "could not join \"$HOME_SSID\": $(wpa_cli -i wlan0 status 2>/dev/null | grep '^wpa_state=')"
+			wpa_cli -i wlan0 scan > /dev/null 2>&1
+			sleep 5
+			say "networks the camera can see (2.4 GHz only):"
+			wpa_cli -i wlan0 scan_results 2>/dev/null | sed -n '2,16p' |
+				while read bssid freq level flags ssid; do
+					say "  \"$ssid\"  $freq MHz  $level dBm"
+				done
 			killall wpa_supplicant
 			return 1
 		fi
