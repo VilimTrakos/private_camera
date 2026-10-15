@@ -1,22 +1,36 @@
-# localcam: kamera bez Yi oblaka, s vlastitom Wi-Fi mrežom i prikazom uživo
+# localcam: kamera bez Yi oblaka, s prikazom uživo na lokalnoj mreži
 
 Pokreće se sa SD kartice preko `debug` kuke u `/usr/sbin/service.sh`. Flash se ne mijenja: kad izvadiš karticu (ili preimenuješ mapu `debug`), kamera je opet originalna.
 
 ## Korištenje
 
-1. U `debug/wifi.conf` na kartici upiši kućni Wi-Fi (`HOME_SSID`, `HOME_PASSWORD`) ili ostavi prazno za vlastitu mrežu kamere (`AP_SSID`, `AP_PASSWORD`). Može i u Notepadu.
+1. Prvi put kopiraj `sd/debug/wifi.conf.example` u `sd/debug/wifi.conf` (prava datoteka nije u gitu jer sadrži lozinke). U `debug/wifi.conf` na kartici upiši kućni Wi-Fi (`HOME_SSID`, `HOME_PASSWORD`) ili ostavi prazno za vlastitu mrežu kamere (`AP_SSID`, `AP_PASSWORD`). Može i u Notepadu.
 2. Otvori stranicu kamere u browseru na istoj mreži:
    - kućni Wi-Fi: **http://ADRESA/**, adresu piše u `debug/localcam.log` (redak `net: home Wi-Fi ...`), na serijskoj konzoli ili u popisu uređaja na routeru;
    - vlastita mreža kamere: spoji mobitel na nju i otvori **http://192.168.10.1/**.
 
 Na stranici su:
-- **↕** okreće sliku naopako, **↔** je zrcali lijevo-desno; oboje se postavlja u kameri, pa vrijedi i za snimke, i pamti se u `debug/image.conf`;
+- **▲ ◀ ▶ ▼** okreću kameru dok se strelica drži (rade i strelice na tipkovnici); kad se pusti ili veza pukne, motor stane;
+- **IR** mijenja noćni vid (automatski, uvijek uključen, isključen), **💡** pali bijelo svjetlo;
+- **Slika ↕** okreće sliku naopako, **Slika ↔** je zrcali lijevo-desno; postavlja se u kameri, pa vrijedi i za snimke;
 - **HD** prebacuje između 1280×720 i 640×360;
 - dolje lijevo: kašnjenje u browseru, fps i kbit/s.
+
+Slika i svjetla pamte se u `debug/camera.conf`.
 
 Kamera ni na kućnom Wi-Fiju nema put van: `scripts/udhcpc.sh` ne uzima gateway ni DNS od routera, `/etc/resolv.conf` je prazan, a `watch.sh` briše default rutu ako je itko doda. Za dodatnu sigurnost na routeru se može blokirati internet za MAC adresu kamere. U vlastitoj mreži kamere mobitel ne dobiva gateway ni DNS, pa za internet i dalje koristi mobilne podatke. Stranica kod otvaranja postavi sat kamere prema mobitelu (bez oblaka kamera nema izvor vremena), pa snimke dobiju točno vrijeme.
 
 Gasi se izvlačenjem napajanja; karticu vadi tek kad je kamera ugašena.
+
+## Izmjene bez vađenja kartice
+
+Dok je kamera na mreži, datoteke na kartici mijenjaju se preko FTP-a (`STOP_FTP=0`). Iz WSL-a ide preko Windowsa (`curl.exe`), jer WSL ne vidi kućnu mrežu:
+
+```sh
+curl.exe -u root: -T sd/debug/www/index.html ftp://ADRESA/mnt/debug/www/index.html
+```
+
+`config.sh` kopira karticu u RAM samo pri paljenju, pa nakon uploada treba restartati kameru (izvući i vratiti napajanje). Zatim **osvježi stranicu**: otvorena stranica se nakon restarta sama ponovno spoji na video, ali ostaje stara verzija.
 
 ## Što config.sh radi pri paljenju
 
@@ -39,12 +53,14 @@ Postavke na vrhu `config.sh`: `QUIET`, `STOP_FTP` (0 = FTP na portu 21 ostaje: p
 
 ## Provjera
 
-`debug/localcam.log` na kartici: što je zamijenjeno, je li AP podignut, svaki start i kraj `anyka_ipc`. Na serijskoj konzoli redovi `[localcam] ...`.
+`debug/localcam.log` na kartici: što je zamijenjeno, na koju se mrežu kamera spojila, svaki start i kraj `anyka_ipc`. Na serijskoj konzoli redovi `[localcam] ...`.
+
+Bez kartice i UART-a: **http://ADRESA/status** pokazuje uptime, rute (ne smije biti default rute), DNS (prazan), Wi-Fi signal, mountove, motore i gledatelje.
 
 ## Build i test
 
 ```sh
-./build.sh          # ARM .so datoteke u sd/debug/lib/ (Docker slika localcam-build)
+./build.sh          # ARM .so datoteke u sd/debug/lib/ (Docker slika localcam-build, treba ../rootfs iz KAMERA.md)
 ./test/run_test.sh  # libYiP2P.so pod qemu s kamerinim uClibc-om, HTTP testovi
 ```
 
@@ -52,4 +68,4 @@ Testovi rade s kamerinim busyboxom i uClibc-om. Naredbe iz Docker kontejnera ne 
 
 ## Kako prikaz uživo radi
 
-`anyka_ipc` je povezan s Yi bibliotekama u oba smjera: on poziva `yi_p2p_*`, a biblioteka njega poziva preko `yi_p2p_on_*` funkcija. Kad browser otvori `/stream`, zamjenski `libYiP2P.so` pozove `yi_p2p_on_new_session(sid)`. To je isti poziv koji bi stigao od Yi aplikacije. `anyka_ipc` tada sam šalje H.264 frameove kroz `yi_p2p_send_frame_data()`, a biblioteka ih prosljeđuje browseru. Browser ih reproducira pomoću `jmuxer.min.js` (MIT, lokalna kopija). Ako Wi-Fi zaostaje (više od ~96 KB na čekanju), frameovi se odbacuju do sljedećeg key framea, umjesto da se kašnjenje gomila.
+`anyka_ipc` je povezan s Yi bibliotekama u oba smjera: on poziva `yi_p2p_*`, a biblioteka njega poziva preko `yi_p2p_on_*` funkcija. Kad browser otvori `/stream`, zamjenski `libYiP2P.so` pozove `yi_p2p_on_new_session(sid)`. To je isti poziv koji bi stigao od Yi aplikacije. `anyka_ipc` tada sam šalje H.264 frameove kroz `yi_p2p_send_frame_data()`, a biblioteka ih prosljeđuje browseru. Browser ih reproducira pomoću `jmuxer.min.js` (MIT, lokalna kopija). Ako Wi-Fi zaostaje (na čekanju je više nego što stane u send buffer, najviše 256 KB), frameovi se odbacuju do sljedećeg key framea, umjesto da se kašnjenje gomila.
