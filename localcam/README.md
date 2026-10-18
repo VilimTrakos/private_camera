@@ -34,6 +34,8 @@ curl.exe -u root: -T sd/debug/www/index.html ftp://ADRESA/mnt/debug/www/index.ht
 
 ## Što config.sh radi pri paljenju
 
+Originali svega što se zamjenjuje su u [../original/](../original/).
+
 Sve se prvo kopira u RAM (`/tmp/localcam`) i radi odande. Kad snimanje krene, `anyka_ipc` pokrene `fuser -m -k /mnt`, što ubija svaki proces s otvorenom datotekom na kartici, pa i njega samog kad bi mu biblioteke bile na kartici.
 
 | Zamjena (`mount -o bind`) | Zašto |
