@@ -145,15 +145,25 @@ The camera's page in the browser has:
 - arrows for the motors,
 - night vision (automatic, on or off) and a white light,
 - image flip and mirror, which also apply to recordings,
-- `/status` with the network state.
+- `/status` with the network state,
+- a side panel for the recordings on the SD card.
 
-The camera still records to the SD card. How to use it: [localcam/README.md](localcam/README.md) (in Croatian).
+The camera still records to the SD card, one MP4 a minute. The side panel lists the recordings by day and hour, plays them in the browser, downloads and deletes them. It also switches recording on and off, deletes recordings older than a set number of days (14 by default), and can copy every new recording to an FTP server on the home network. How to use it: [localcam/README.md](localcam/README.md) (in Croatian).
+
+**How the recordings were worked out:**
+- In the decompiled `anyka_ipc`, the Yi app's "stop recording" handler calls `AkSetRecordMode(0)` and then saves `yi_cfg.ini` to flash. `AkSetRecordMode` is exported, so the replacement library calls it directly and nothing is written to flash.
+- `record_time_plan_main` sets the recording mode only when the plan changes, so recording stays off once it is switched off. At startup `anyka_ipc` switches recording back on, so the library switches it off again every minute.
+- A recording is written to `tmp/record_file_1` and moved into `record/` only when it is complete, so everything in `record/` can be served or uploaded.
+- Recordings are MP4 files with the index at the end, so the web server answers HTTP Range requests. That is how the browser seeks and finds the index.
+- The camera has no clock of its own. Old recordings are deleted only while it has the right time, and never the ones recorded before it had it. After a power cut it takes the time from the FTP server.
+- Busybox has `ftpput` but no `scp`, and the kernel has NFS but no SMB. The FTP client is a few hundred lines of C inside the library, with passive mode, a `.part` file renamed when complete, and retries.
 
 ## Why the camera cannot get out
 
 - Everything that calls the Yi cloud is replaced (table above), so no connection even starts.
 - On home Wi-Fi the camera takes only an address from the router. It ignores the gateway and DNS (`scripts/udhcpc.sh`), `/etc/resolv.conf` is empty, and `scripts/watch.sh` deletes the default route if anything adds one.
 - When the camera runs its own network, that network has no gateway or DNS.
+- Uploading to an FTP server does not open a way out: without a default route the camera reaches only a server on its own subnet, and without DNS only by IP address.
 - **http://ADDRESS/status** shows the routes and DNS, so all of this can be checked.
 
 For extra safety, the camera's internet access can also be blocked on the router.

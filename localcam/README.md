@@ -14,9 +14,31 @@ Na stranici su:
 - **IR** mijenja noćni vid (automatski, uvijek uključen, isključen), **💡** pali bijelo svjetlo;
 - **Slika ↕** okreće sliku naopako, **Slika ↔** je zrcali lijevo-desno; postavlja se u kameri, pa vrijedi i za snimke;
 - **HD** prebacuje između 1280×720 i 640×360;
-- dolje lijevo: kašnjenje u browseru, fps i kbit/s.
+- dolje lijevo: kašnjenje u browseru, fps i kbit/s;
+- **Snimke** (gore desno) otvara ploču sa strane, opisanu ispod.
 
-Slika i svjetla pamte se u `debug/camera.conf`.
+Slika, svjetla i postavke snimanja pamte se u `debug/camera.conf`.
+
+## Snimke
+
+Kamera sama snima na karticu, jednu MP4 datoteku (H.264 i AAC) svake minute: `record/2026Y10M19D19H/26M18S41.mp4` znači 19. 10. 2026. u 19:26:18, 41 sekunda. Mapa je sat po lokalnom vremenu kamere. Snimka nastaje u `tmp/record_file_1`, a u `record/` dolazi tek gotova.
+
+Ploča **Snimke**:
+- **Snima / Ne snima** pali i gasi snimanje (`AkSetRecordMode` u `anyka_ipc`, bez upisa u flash). Isključenje se ponavlja svake minute, jer `anyka_ipc` snimanje pri pokretanju sam upali;
+- **Briši starije od** (zadano 14 dana): svakih 10 minuta brišu se sati stariji od toga. Briše samo dok sat kamere ide točno, i nikad ne dira mape snimljene prije nego što je kamera dobila vrijeme (1970, 2023), jer se iz imena takve mape ne zna koliko je stara. Te mape briše se ručno. „Nikad” prepušta brisanje kameri, koja najstarije briše kad se kartica napuni;
+- popis po danima i satima: ▶ pusti snimku umjesto slike uživo (sljedeća minuta istog sata krene sama, **● Uživo** vraća prijenos uživo), ⬇ preuzme je kao `2026-10-19_19-26-18.mp4`, 🗑 obriše snimku, sat ili cijeli dan;
+- **Server (FTP)**: kamera šalje svaku novu snimku na FTP server, u `MAPA/2026-10-19/19-26-18.mp4`.
+
+O slanju na server:
+- upisuje se IP adresa servera (kamera nema DNS) u lokalnoj mreži, jer kamera ne vidi ništa izvan nje;
+- šalje samo snimke nastale nakon što je slanje uključeno. Snimka se prvo spremi kao `.part`, a pravo ime dobije kad je cijela;
+- dokle je stiglo piše u `debug/upload.state`. Ako server ne radi, pokušava ponovno nakon 30 s, pa sve rjeđe, do jednom u 5 minuta, i šalje sve što je u međuvremenu nastalo;
+- **Provjeri vezu** se prijavi, napravi mapu, zapiše, preimenuje i obriše probnu datoteku `.localcam-test`, a ne sprema ništa;
+- kad kamera nakon nestanka struje nema sat, vrijeme uzme sa servera (MDTM probne datoteke). Dok sat ima, ne dira ga: neki serveri MDTM ne daju u UTC-u;
+- snimke ostaju i na kartici, dok ih ne obriše pravilo iznad;
+- postavke su u `debug/upload.conf`, a lozinka je ondje u čistom tekstu. Stranica je nikad ne šalje natrag u browser.
+
+Promjene (snimanje, brisanje, server) idu POST zahtjevom sa zaglavljem `X-Localcam: 1`. Stranica s neke druge web adrese to zaglavlje ne može dodati, pa preko browsera ne može brisati snimke ni mijenjati postavke. Lozinke za samu stranicu nema: tko je u istoj mreži, može sve, kao i preko FTP-a kamere.
 
 Kamera ni na kućnom Wi-Fiju nema put van: `scripts/udhcpc.sh` ne uzima gateway ni DNS od routera, `/etc/resolv.conf` je prazan, a `watch.sh` briše default rutu ako je itko doda. Za dodatnu sigurnost na routeru se može blokirati internet za MAC adresu kamere. U vlastitoj mreži kamere mobitel ne dobiva gateway ni DNS, pa za internet i dalje koristi mobilne podatke. Stranica kod otvaranja postavi sat kamere prema mobitelu (bez oblaka kamera nema izvor vremena), pa snimke dobiju točno vrijeme.
 
@@ -57,7 +79,7 @@ Postavke na vrhu `config.sh`: `QUIET`, `STOP_FTP` (0 = FTP na portu 21 ostaje: p
 
 `debug/localcam.log` na kartici: što je zamijenjeno, na koju se mrežu kamera spojila, svaki start i kraj `anyka_ipc`. Na serijskoj konzoli redovi `[localcam] ...`.
 
-Bez kartice i UART-a: **http://ADRESA/status** pokazuje uptime, rute (ne smije biti default rute), DNS (prazan), Wi-Fi signal, mountove, motore i gledatelje.
+Bez kartice i UART-a: **http://ADRESA/status** pokazuje uptime, rute (ne smije biti default rute), DNS (prazan), Wi-Fi signal, mountove, motore, snimanje, slanje na server i gledatelje.
 
 ## Build i test
 
@@ -65,6 +87,8 @@ Bez kartice i UART-a: **http://ADRESA/status** pokazuje uptime, rute (ne smije b
 ./build.sh          # ARM .so datoteke u sd/debug/lib/ (Docker slika localcam-build, treba ../rootfs iz KAMERA.md)
 ./test/run_test.sh  # libYiP2P.so pod qemu s kamerinim uClibc-om, HTTP testovi
 ```
+
+Test umjesto kartice koristi privremenu mapu s izmišljenim snimkama, a za slanje diže mali FTP server u Pythonu. Taj server u PASV odgovoru namjerno daje krivu adresu, jer kamera mora koristiti adresu kontrolne veze.
 
 Testovi rade s kamerinim busyboxom i uClibc-om. Naredbe iz Docker kontejnera ne vrijede kao dokaz, jer kamera nema sve što Debian ima (npr. `tr`).
 
