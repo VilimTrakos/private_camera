@@ -21,7 +21,7 @@ Slika, svjetla i postavke snimanja pamte se u `debug/camera.conf`.
 
 ## Snimke
 
-Kamera sama snima na karticu, jednu MP4 datoteku (H.264 i AAC) svake minute: `record/2026Y10M19D19H/26M18S41.mp4` znači 19. 10. 2026. u 19:26:18, 41 sekunda. Mapa je sat po lokalnom vremenu kamere. Snimka nastaje u `tmp/record_file_1`, a u `record/` dolazi tek gotova.
+Kamera sama snima na karticu, jednu MP4 datoteku (H.264 i AAC) svake minute: `record/2026Y10M19D19H/26M18S41.mp4` znači 19. 10. 2026. u 19:26:18, 41 sekunda. Mapa je sat po lokalnom vremenu kamere. Snimka nastaje u `tmp/record_file_1`, a u `record/` dolazi tek gotova. `anyka_ipc` ih označava kao 3GPP (`ftyp 3gp5`), a Firefox 3GPP ne pušta ("No video with supported format"), iako je sadržaj običan MP4. Zato kamera pri slanju (u browser, kod preuzimanja i na FTP) oznaku zamijeni s `isom`. Zamjena je iste duljine, a datoteke na kartici ostaju kakve jesu.
 
 Ploča **Snimke**:
 - **Snima / Ne snima** pali i gasi snimanje (`AkSetRecordMode` u `anyka_ipc`, bez upisa u flash). Isključenje se ponavlja svake minute, jer `anyka_ipc` snimanje pri pokretanju sam upali;

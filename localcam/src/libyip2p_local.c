@@ -1035,6 +1035,46 @@ static void handle_rec_list(int fd, const char *query)
 	send_json(fd, &b);
 }
 
+/*
+ * anyka_ipc labels its MP4 files as 3GPP: ftyp 3gp5, compatible 3gp5 3gp4
+ * isom. Firefox will not play 3GPP ("Failed to init decoder"); the content
+ * is plain MP4 (H.264 and AAC), and with "isom" it plays. The brands are
+ * replaced on the way out, same length, so sizes and ranges stay as they
+ * are; the files on the card are not changed.
+ */
+struct mp4_head {
+	unsigned char b[64];
+	size_t n;		/* bytes to overlay from offset 0; 0 = none */
+};
+
+/* Leaves the file position wherever; callers seek afterwards. */
+static void mp4_head_read(int f, struct mp4_head *h)
+{
+	size_t i, box;
+	ssize_t r;
+
+	h->n = 0;
+	if (lseek(f, 0, SEEK_SET) != 0 || (r = read(f, h->b, sizeof(h->b))) < 16 ||
+	    memcmp(h->b + 4, "ftyp", 4))
+		return;
+	box = (size_t)h->b[0] << 24 | h->b[1] << 16 | h->b[2] << 8 | h->b[3];
+	if (box < 16 || box > (size_t)r)
+		return;
+	for (i = 8; i + 4 <= box; i += 4)
+		if (i != 12 && !memcmp(h->b + i, "3gp", 3))	/* 12: minor version */
+			memcpy(h->b + i, "isom", 4);
+	h->n = box;
+}
+
+/* buf holds len bytes of the file from offset pos. */
+static void mp4_head_apply(const struct mp4_head *h, char *buf, size_t len, long pos)
+{
+	size_t i;
+
+	for (i = 0; i < len && (size_t)pos + i < h->n; i++)
+		buf[i] = h->b[pos + i];
+}
+
 /* "bytes=A-B", "bytes=A-" or "bytes=-N" (the last N); one range only. */
 static int parse_range(const char *r, long size, long *start, long *end)
 {
@@ -1076,7 +1116,8 @@ static void serve_recording(int fd, char *rel, const char *range, int download)
 {
 	char path[200], hdr[512], cr[80] = "", cd[96] = "", buf[8192];
 	char *file = strchr(rel, '/');
-	long size, start = 0, end, left;
+	struct mp4_head head;
+	long size, start = 0, end, left, pos;
 	ssize_t n;
 	int f;
 
@@ -1121,10 +1162,14 @@ static void serve_recording(int fd, char *rel, const char *range, int download)
 		 cr[0] ? "206 Partial Content" : "200 OK", end - start + 1, cr, cd);
 	/* A paused video element stops reading for a while; do not give up on it at once. */
 	set_timeout(fd, SO_SNDTIMEO, 30);
+	mp4_head_read(f, &head);
 	if (send_str(fd, hdr) == 0 && lseek(f, start, SEEK_SET) == start) {
-		for (left = end - start + 1; left > 0; left -= n) {
+		for (pos = start, left = end - start + 1; left > 0; left -= n, pos += n) {
 			n = read(f, buf, left < (long)sizeof(buf) ? (size_t)left : sizeof(buf));
-			if (n <= 0 || send_all(fd, buf, n, 0) < 0)
+			if (n <= 0)
+				break;
+			mp4_head_apply(&head, buf, n, pos);
+			if (send_all(fd, buf, n, 0) < 0)
 				break;
 		}
 	}
@@ -1526,9 +1571,19 @@ static int ftp_put(struct ftp *f, const char *dir, const char *name, int src, ch
 	if (src < 0) {
 		failed = send_all(data, test_text, sizeof(test_text) - 1, 0) < 0;
 	} else {
-		while ((n = read(src, buf, sizeof(buf))) > 0)
-			if (send_all(data, buf, n, 0) < 0)
-				break;
+		struct mp4_head head;
+		long pos = 0;
+
+		mp4_head_read(src, &head);	/* the server gets "isom" too */
+		if (lseek(src, 0, SEEK_SET) != 0)
+			n = -1;
+		else
+			while ((n = read(src, buf, sizeof(buf))) > 0) {
+				mp4_head_apply(&head, buf, n, pos);
+				pos += n;
+				if (send_all(data, buf, n, 0) < 0)
+					break;
+			}
 		failed = n != 0;
 	}
 	close(data);

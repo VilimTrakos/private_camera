@@ -27,6 +27,11 @@ def content(name, size):
     return bytes((seed + i * 7) & 0xFF for i in range(size))
 
 
+# anyka_ipc's files start like this: ftyp 3gp5, compatible 3gp5 3gp4 isom
+FTYP_3GP = bytes.fromhex("0000001c") + b"ftyp3gp5" + bytes(4) + b"3gp53gp4isom"
+FTYP_ISOM = bytes.fromhex("0000001c") + b"ftypisom" + bytes(4) + b"isomisomisom"
+
+
 def setup(sd):
     now = time.time()
     rec = os.path.join(sd, "record")
@@ -40,7 +45,10 @@ def setup(sd):
         os.makedirs(os.path.join(rec, d), exist_ok=True)
         for n in names:
             with open(os.path.join(rec, d, n), "wb") as f:
-                f.write(content(d + n, 50000))
+                data = content(d + n, 50000)
+                if n == "02M00S59.mp4":
+                    data = FTYP_3GP + data[len(FTYP_3GP):]
+                f.write(data)
     os.makedirs(os.path.join(rec, "notes"), exist_ok=True)  # not a recording folder
     os.makedirs(os.path.join(sd, "debug"), exist_ok=True)
 
@@ -461,6 +469,13 @@ status, h, body = get_full(f"/rec/{H0}/01M00S59.mp4", "Range: bytes=-5\r\n")
 check("206" in status and body == data[-5:], f"Range bytes=-5 ({status})")
 status, h, body = get_full(f"/rec/{H0}/01M00S59.mp4", "Range: bytes=50000-\r\n")
 check("416" in status and h.get("content-range") == "bytes */50000", f"Range past the end -> 416 ({status})")
+data = read(os.path.join(REC, H0, "02M00S59.mp4"))
+status, h, body = get_full(f"/rec/{H0}/02M00S59.mp4")
+check(data[:28] == FTYP_3GP and body == FTYP_ISOM + data[28:],
+      "served as isom instead of 3gp5 (Firefox will not play 3GPP), the rest unchanged")
+status, h, body = get_full(f"/rec/{H0}/02M00S59.mp4", "Range: bytes=8-11\r\n")
+check(body == b"isom", f"also inside a range ({body})")
+check(read(os.path.join(REC, H0, "02M00S59.mp4")) == data, "the file on the card is not changed")
 status, h, _ = get_full(f"/rec/{H0}/01M00S59.mp4?dl=1")
 want = f'{H0[0:4]}-{H0[5:7]}-{H0[8:10]}_{H0[11:13]}-01-00.mp4'
 check(want in h.get("content-disposition", ""), f"?dl=1 downloads as {want} ({h.get('content-disposition')})")
@@ -515,11 +530,12 @@ check(ftp.files() == [], f"recordings already on the card are not sent ({ftp.fil
 
 new = os.path.join(REC, H0, "04M00S59.mp4")
 with open(new, "wb") as f:
-    f.write(content("new", 300000))
+    f.write(FTYP_3GP + content("new", 300000))
 remote = os.path.join("kamera", "dvor", f"{H0[0:4]}-{H0[5:7]}-{H0[8:10]}", f"{H0[11:13]}-04-00.mp4")
 check(wait_for(lambda: remote in ftp.files(), 10), f"a new recording is sent ({ftp.files()})")
 check(wait_for(lambda: get_json("/upload").get("last") == f"{H0}/04M00S59.mp4", 5) and
-      read(os.path.join(ftp_root, remote)) == read(new), "it arrives complete, under its time")
+      read(os.path.join(ftp_root, remote)) == FTYP_ISOM + read(new)[28:],
+      "it arrives complete (as isom), under its time")
 check(not any(f.endswith(".part") for f in ftp.files()), "no .part file left")
 check(b"LAST=" + f"{H0}/04M00S59.mp4".encode() in read(os.path.join(SD, "debug", "upload.state")),
       "progress saved in upload.state")
