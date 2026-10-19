@@ -12,9 +12,13 @@
     --muted: #9aa0a6;
     --live: #34c759;
     --warn: #ff9f0a;
+    --danger: #ff453a;
     --border: rgba(255, 255, 255, 0.12);
+    --sheet: #101216;
+    --panel-w: 400px;
   }
   * { box-sizing: border-box; }
+  [hidden], .pill:empty { display: none !important; }
   html, body { margin: 0; height: 100%; background: var(--bg); color: var(--text);
     font: 15px/1.4 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
   .stage { position: fixed; inset: 0; display: flex; align-items: center; justify-content: center; }
@@ -23,7 +27,7 @@
   .top { top: 16px; justify-content: space-between; }
   .bottom { bottom: 16px; justify-content: flex-end; }
   .pill, button { background: var(--panel); border: 1px solid var(--border); border-radius: 999px;
-    color: var(--text); padding: 7px 14px; font: inherit; backdrop-filter: blur(6px); }
+    color: var(--text); padding: 7px 14px; font: inherit; backdrop-filter: blur(6px); white-space: nowrap; }
   button { cursor: pointer; }
   button:hover { border-color: rgba(255, 255, 255, 0.3); }
   button[aria-pressed="true"] { background: var(--text); color: var(--bg); }
@@ -42,22 +46,143 @@
   .pad .right { grid-area: 2 / 3; }
   .pad .down { grid-area: 3 / 2; }
   .pad button.active { background: var(--text); color: var(--bg); }
+  .group { display: flex; align-items: center; gap: 8px; }
+
+  /* Recordings panel: beside the picture on wide screens, over it on phones. */
+  .panel { position: fixed; top: 0; right: 0; bottom: 0; width: min(var(--panel-w), 100vw); z-index: 10;
+    display: flex; flex-direction: column; background: var(--sheet); border-left: 1px solid var(--border);
+    transform: translateX(100%); transition: transform 0.2s ease; visibility: hidden; }
+  body.panel-open .panel { transform: none; visibility: visible; }
+  @media (min-width: 900px) {
+    body.panel-open .stage { right: var(--panel-w); }
+    body.panel-open .bar, body.panel-open .pad { right: calc(var(--panel-w) + 16px); }
+  }
+  .panel-head { display: flex; align-items: center; gap: 8px; padding: 14px 16px;
+    border-bottom: 1px solid var(--border); }
+  .panel-head strong { margin-right: auto; font-size: 17px; }
+  .panel-body { flex: 1; overflow-y: auto; padding: 12px 16px 24px; }
+  .card { border: 1px solid var(--border); border-radius: 12px; padding: 12px; margin-bottom: 12px; }
+  .row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+  .small { font-size: 13px; }
+  .warn { color: var(--warn); }
+  .error { color: var(--danger); }
+  .ok { color: var(--live); }
+  .meter { height: 6px; border-radius: 3px; background: rgba(255, 255, 255, 0.1); margin: 12px 0 6px; overflow: hidden; }
+  .meter div { height: 100%; width: 0; background: var(--text); }
+  select, input { background: rgba(255, 255, 255, 0.06); border: 1px solid var(--border); border-radius: 8px;
+    color: var(--text); font: inherit; padding: 6px 8px; min-width: 0; }
+  select option { background: #1c1f24; }
+  button.icon, a.icon { padding: 4px 8px; border-radius: 8px; background: none; border: 1px solid transparent;
+    color: var(--muted); text-decoration: none; font-size: 14px; line-height: 1.4; }
+  button.icon:hover, a.icon:hover { border-color: var(--border); color: var(--text); }
+  button.del:hover { color: var(--danger); }
+  #rec-on[aria-pressed="true"] { background: none; color: var(--text); }
+  #rec-on .dot { background: var(--muted); }
+  #rec-on[aria-pressed="true"] .dot { background: var(--danger); }
+
+  details > summary { cursor: pointer; list-style: none; }
+  details > summary::-webkit-details-marker { display: none; }
+  #ftp > summary { display: flex; align-items: center; gap: 8px; font-weight: 600; }
+  #ftp > summary .small { font-weight: normal; margin-left: auto; text-align: right; }
+  .form { display: grid; grid-template-columns: repeat(6, 1fr); gap: 8px; margin-top: 12px; }
+  .form label { display: grid; gap: 4px; font-size: 13px; color: var(--muted); grid-column: span 3; }
+  .form .host { grid-column: span 4; }
+  .form .port { grid-column: span 2; }
+  .form .wide { grid-column: 1 / -1; }
+  .form label.check { display: flex; align-items: center; gap: 8px; color: var(--text); font-size: 15px; }
+
+  .list-head { display: flex; align-items: center; margin: 4px 0 8px; }
+  .list-head strong { margin-right: auto; }
+  .day { border-top: 1px solid var(--border); }
+  .day > summary, .hour > summary { display: flex; align-items: center; gap: 8px; padding: 8px 0; }
+  .day > summary .label { font-weight: 600; margin-right: auto; }
+  .day > summary::before, .hour > summary::before { content: "▸"; color: var(--muted); width: 12px; }
+  .day[open] > summary::before, .hour[open] > summary::before { content: "▾"; }
+  .hours { padding-left: 14px; }
+  .hour > summary .label { margin-right: auto; font-variant-numeric: tabular-nums; }
+  .files { list-style: none; margin: 0 0 8px; padding: 0 0 0 20px; }
+  .files li { display: flex; align-items: center; gap: 6px; padding: 2px 0; }
+  .files .play { padding: 3px 10px; border-radius: 8px; font-variant-numeric: tabular-nums; }
+  .files .meta { margin-right: auto; font-variant-numeric: tabular-nums; }
+  .files li.playing .play { background: var(--text); color: var(--bg); }
+  .empty { padding: 16px 0; }
 </style>
 </head>
 <body>
-<div class="stage"><video id="v" autoplay muted playsinline></video></div>
+<div class="stage">
+  <video id="v" autoplay muted playsinline></video>
+  <video id="rv" controls playsinline hidden></video>
+</div>
 
 <div class="bar top">
-  <span class="pill" id="status"><span class="dot"></span><span id="status-text">Spajanje…</span></span>
-  <span class="pill muted" id="res"></span>
+  <span class="group">
+    <span class="pill" id="status"><span class="dot"></span><span id="status-text">Spajanje…</span></span>
+    <button id="live" hidden title="Natrag na sliku uživo">● Uživo</button>
+  </span>
+  <span class="group">
+    <span class="pill muted" id="res"></span>
+    <button id="open-panel" title="Snimke na SD kartici, snimanje i slanje na server">Snimke</button>
+  </span>
 </div>
+
+<aside class="panel" id="panel" aria-label="Snimke">
+  <div class="panel-head">
+    <strong>Snimke</strong>
+    <button class="icon" id="close-panel" title="Zatvori">✕</button>
+  </div>
+  <div class="panel-body">
+    <section class="card">
+      <div class="row">
+        <button id="rec-on" aria-pressed="true" title="Snimanje na SD karticu"><span class="dot"></span><span id="rec-on-text">Snima</span></button>
+        <label class="small muted">Briši starije od
+          <select id="keep">
+            <option value="1">1 dan</option>
+            <option value="3">3 dana</option>
+            <option value="7">7 dana</option>
+            <option value="14">14 dana</option>
+            <option value="30">30 dana</option>
+            <option value="60">60 dana</option>
+            <option value="0">nikad (dok ima mjesta)</option>
+          </select>
+        </label>
+      </div>
+      <div class="meter"><div id="sd-bar"></div></div>
+      <div class="small muted" id="sd-text"></div>
+      <div class="small warn" id="clock-warn" hidden>Sat kamere nije namješten, pa se stare snimke zasad ne brišu.</div>
+    </section>
+
+    <details class="card" id="ftp">
+      <summary>Server (FTP) <span class="small muted" id="ftp-state"></span></summary>
+      <form class="form" id="ftp-form" autocomplete="off">
+        <label class="host">IP adresa servera <input name="host" placeholder="192.168.1.10" inputmode="decimal"></label>
+        <label class="port">Port <input name="port" type="number" min="1" max="65535" placeholder="21"></label>
+        <label>Korisnik <input name="user"></label>
+        <label>Lozinka <input name="pass" type="password" autocomplete="new-password"></label>
+        <label class="wide">Mapa na serveru <input name="path" placeholder="/kamera"></label>
+        <label class="check wide"><input type="checkbox" name="on"> Šalji nove snimke na server</label>
+        <div class="row wide">
+          <button type="submit">Spremi</button>
+          <button type="button" id="ftp-test">Provjeri vezu</button>
+        </div>
+        <div class="small wide" id="ftp-msg"></div>
+        <div class="small muted wide">Svaka snimka ide u mapa/2026-10-19/19-26-18.mp4. Na kartici ostaje dok je ne obriše pravilo iznad.</div>
+      </form>
+    </details>
+
+    <div class="list-head">
+      <strong>Na kartici</strong>
+      <button class="icon" id="reload" title="Osvježi popis">↻</button>
+    </div>
+    <div id="days"></div>
+  </div>
+</aside>
 <div class="pad" aria-label="Motori: drži strelicu za okretanje kamere">
   <button class="up" data-dir="up" title="Gore">▲</button>
   <button class="left" data-dir="left" title="Lijevo">◀</button>
   <button class="right" data-dir="right" title="Desno">▶</button>
   <button class="down" data-dir="down" title="Dolje">▼</button>
 </div>
-<div class="bar bottom">
+<div class="bar bottom" id="bottom">
   <span class="pill muted stats" id="stats"></span>
   <button id="ir" title="Noćni vid (infracrvene lampice): automatski, uvijek uključen ili isključen">IR auto</button>
   <button id="white" aria-pressed="false" title="Bijelo svjetlo">💡</button>
@@ -232,7 +357,8 @@
   const keyDir = { ArrowUp: 'up', ArrowDown: 'down', ArrowLeft: 'left', ArrowRight: 'right' };
   document.addEventListener('keydown', e => {
     const dir = keyDir[e.key];
-    if (!dir) return;
+    // not while typing in the panel, or while a recording plays (arrows seek there)
+    if (!dir || playing || e.target.closest('input, select, textarea, video')) return;
     e.preventDefault();
     ptzStart(dir, document.querySelector('.pad [data-dir="' + dir + '"]'));
   });
@@ -243,15 +369,310 @@
   hdButton.addEventListener('click', () => {
     hd = !hd;
     try { localStorage.setItem('hd', hd ? '1' : '0'); } catch (e) {}
-    play();
+    if (playing) hdButton.setAttribute('aria-pressed', String(hd));
+    else play();
   });
   document.getElementById('fs').addEventListener('click', () => {
     if (document.fullscreenElement) document.exitFullscreen();
     else document.documentElement.requestFullscreen().catch(() => {});
   });
 
+  // ---------- recordings panel ----------
+  // anyka_ipc records one MP4 a minute into record/2026Y10M19D19H/26M18S41.mp4
+  // (local hour; the minute starts at 26:18 and lasts 41 s).
+  const panel = document.getElementById('panel');
+  const daysEl = document.getElementById('days');
+  const recVideo = document.getElementById('rv');
+  const liveButton = document.getElementById('live');
+  const pad = document.querySelector('.pad');
+  const bottomBar = document.getElementById('bottom');  // live-only buttons; a recording has its own controls
+  const SANE = new Date(2026, 8, 21);  // earlier dates mean the camera's clock was not set
+  const dayNames = ['nedjelja', 'ponedjeljak', 'utorak', 'srijeda', 'četvrtak', 'petak', 'subota'];
+  let playing = null;  // { dir, file, li } while a recording is shown instead of the live picture
+  let listLoaded = false, panelTimer = null;
+
+  const el = (tag, props) => Object.assign(document.createElement(tag), props);
+  const two = n => String(n).padStart(2, '0');
+  const dirDate = d => new Date(+d.slice(0, 4), +d.slice(5, 7) - 1, +d.slice(8, 10), +(d.slice(11, 13) || 0));
+  const gb = m => (m / 1024).toLocaleString('hr', { maximumFractionDigits: 1 }) + ' GB';
+  const mb = b => (b / 1048576).toLocaleString('hr', { maximumFractionDigits: 1 }) + ' MB';
+  function plural(n) {
+    if (n % 10 === 1 && n % 100 !== 11) return n + ' snimka';
+    if (n % 10 >= 2 && n % 10 <= 4 && !(n % 100 >= 12 && n % 100 <= 14)) return n + ' snimke';
+    return n + ' snimki';
+  }
+  function dayLabel(day) {
+    const t = dirDate(day), name = dayNames[t.getDay()];
+    return `${name[0].toUpperCase()}${name.slice(1)}, ${t.getDate()}. ${t.getMonth() + 1}. ${t.getFullYear()}.`;
+  }
+  function fileInfo(dir, f) {
+    const m = /^(\d\d)M(\d\d)S(\d+)\.mp4$/.exec(f);
+    return m ? { time: `${dir.slice(11, 13)}:${m[1]}:${m[2]}`, secs: +m[3] } : { time: f, secs: null };
+  }
+
+  async function getJson(path) {
+    const r = await fetch(path, { cache: 'no-store' });
+    if (!r.ok) throw new Error('greška ' + r.status);
+    return r.json();
+  }
+  // Changes go by POST with a header that a page from another site cannot add.
+  async function api(path, fields) {
+    const r = await fetch(path, { method: 'POST', cache: 'no-store', headers: { 'X-Localcam': '1' },
+                                  body: new URLSearchParams(fields) });
+    if (!r.ok) throw new Error('greška ' + r.status);
+    return r.json();
+  }
+
+  function openPanel(open) {
+    document.body.classList.toggle('panel-open', open);
+    try { localStorage.setItem('panel', open ? '1' : '0'); } catch (e) {}
+    clearInterval(panelTimer);
+    if (!open) return;
+    refreshRecord();
+    refreshUpload();
+    if (!listLoaded) loadList();
+    panelTimer = setInterval(() => { refreshRecord(); refreshUpload(); }, 10000);
+  }
+  document.getElementById('open-panel').addEventListener('click', () =>
+    openPanel(!document.body.classList.contains('panel-open')));
+  document.getElementById('close-panel').addEventListener('click', () => openPanel(false));
+  document.getElementById('reload').addEventListener('click', loadList);
+
+  // Recording on/off, how long recordings stay, SD card space.
+  const recOn = document.getElementById('rec-on');
+  const keepSel = document.getElementById('keep');
+  function showRecord(s) {
+    recOn.setAttribute('aria-pressed', String(!!s.on));
+    document.getElementById('rec-on-text').textContent = s.on ? 'Snima' : 'Ne snima';
+    if (![...keepSel.options].some(o => +o.value === s.keep)) keepSel.add(new Option(s.keep + ' dana', s.keep));
+    keepSel.value = String(s.keep);
+    const used = s.total_mb - s.free_mb;
+    document.getElementById('sd-bar').style.width = s.total_mb ? (100 * used / s.total_mb).toFixed(1) + '%' : '0';
+    document.getElementById('sd-text').textContent = s.total_mb
+      ? `SD kartica: ${gb(s.free_mb)} slobodno od ${gb(s.total_mb)}` : 'SD kartica nije dostupna';
+    document.getElementById('clock-warn').hidden = !!s.clock;
+  }
+  async function refreshRecord() {
+    try { showRecord(await getJson('/record')); } catch (e) {}
+  }
+  recOn.addEventListener('click', async () => {
+    const on = recOn.getAttribute('aria-pressed') !== 'true';
+    if (!on && !confirm('Isključiti snimanje na SD karticu?')) return;
+    try { showRecord(await api('/record', { on: on ? 1 : 0 })); } catch (e) { alert('Nije uspjelo: ' + e.message); }
+  });
+  keepSel.addEventListener('change', async () => {
+    if (keepSel.value !== '0' && !confirm(`Odmah obrisati sve snimke starije od ${keepSel.selectedOptions[0].text}?`)) {
+      refreshRecord();
+      return;
+    }
+    try {
+      showRecord(await api('/record', { keep: keepSel.value }));
+      setTimeout(loadList, 3000);
+    } catch (e) { alert('Nije uspjelo: ' + e.message); }
+  });
+
+  // FTP server: settings, a connection test and how the upload is going.
+  const ftpForm = document.getElementById('ftp-form'), F = ftpForm.elements;
+  const ftpMsg = document.getElementById('ftp-msg'), ftpState = document.getElementById('ftp-state');
+  let ftpFilled = false;  // fill the form once; later refreshes must not undo the user's typing
+  function say(text, cls) {
+    ftpMsg.textContent = text;
+    ftpMsg.className = 'small wide ' + (cls || '');
+  }
+  function showUpload(s) {
+    if (!ftpFilled) {
+      F.host.value = s.host;
+      F.port.value = s.port;
+      F.user.value = s.user;
+      F.path.value = s.path;
+      F.on.checked = !!s.on;
+      F.pass.placeholder = s.pass ? 'spremljena (prazno = ne mijenjaj)' : '';
+      ftpFilled = true;
+    }
+    let text = 'isključeno', cls = 'muted';
+    if (s.on) {
+      cls = 'ok';
+      if (s.error) { text = s.error; cls = 'error'; }
+      else if (s.busy) text = 'šalje…';
+      else if (s.last) {
+        const t = dirDate(s.last.slice(0, 14));
+        text = `zadnja ${t.getDate()}. ${t.getMonth() + 1}. ${fileInfo(s.last.slice(0, 14), s.last.slice(15)).time}`;
+      } else text = 'čeka novu snimku';
+      if (s.pending > 0) text += ` · čeka ${s.pending}`;
+    }
+    ftpState.textContent = text;
+    ftpState.className = 'small ' + cls;
+  }
+  async function refreshUpload() {
+    try { showUpload(await getJson('/upload')); } catch (e) {}
+  }
+  const ftpFields = () => ({ on: F.on.checked ? 1 : 0, host: F.host.value.trim(), port: F.port.value || 21,
+                             user: F.user.value, pass: F.pass.value, path: F.path.value.trim() });
+  ftpForm.addEventListener('submit', async e => {
+    e.preventDefault();
+    say('Spremam…');
+    try {
+      const s = await api('/upload', ftpFields());
+      if (s.error) return say(s.error, 'error');
+      F.pass.value = '';
+      ftpFilled = false;
+      showUpload(s);
+      say(s.on ? 'Spremljeno. Svaka nova snimka ide na server.' : 'Spremljeno. Slanje je isključeno.', 'ok');
+    } catch (err) { say('Nije uspjelo: ' + err.message, 'error'); }
+  });
+  document.getElementById('ftp-test').addEventListener('click', async () => {
+    say('Spajam se na server…');
+    try {
+      const r = await api('/upload/test', ftpFields());
+      if (!r.ok) return say(r.msg, 'error');
+      let text = 'Veza radi: prijava, mapa i pisanje su u redu.';
+      if (r.server_time) {
+        const off = Math.round((r.server_time * 1000 - Date.now()) / 60000);
+        text += ` Sat servera: ${new Date(r.server_time * 1000).toLocaleString('hr')}`;
+        if (Math.abs(off) >= 2) text += ` (od ovog uređaja odstupa ${off} min)`;
+      }
+      say(text, 'ok');
+    } catch (err) { say('Nije uspjelo: ' + err.message, 'error'); }
+  });
+
+  // The list: days, hours in a day, minutes in an hour (loaded when opened).
+  function delButton(question, p, node) {
+    const b = el('button', { className: 'icon del', title: 'Obriši', textContent: '🗑' });
+    b.addEventListener('click', async e => {
+      e.preventDefault();  // inside <summary> the click would also open/close it
+      e.stopPropagation();
+      if (!confirm(question)) return;
+      try {
+        await api('/rec/delete', { p });
+        if (playing && `${playing.dir}/${playing.file}`.startsWith(p)) goLive();
+        const hour = node.closest('.hour'), day = node.closest('.day');
+        node.remove();
+        if (hour && node !== hour) hour.querySelector('.count').textContent = plural(hour.querySelectorAll('li[data-file]').length);
+        if (day && node !== day && !day.querySelector('.hour')) day.remove();
+        refreshRecord();
+      } catch (err) { alert('Brisanje nije uspjelo: ' + err.message); }
+    });
+    return b;
+  }
+
+  function fileEl(dir, f) {
+    const info = fileInfo(dir, f.n);
+    const li = el('li');
+    li.dataset.file = f.n;
+    const playBtn = el('button', { className: 'play', textContent: '▶ ' + info.time, title: 'Pusti' });
+    playBtn.addEventListener('click', () => playRecording(dir, f.n, li));
+    li.append(playBtn,
+      el('span', { className: 'meta small muted', textContent: (info.secs !== null ? info.secs + ' s · ' : '') + mb(f.s) }),
+      el('a', { className: 'icon', href: `/rec/${dir}/${f.n}?dl=1`, title: 'Preuzmi', textContent: '⬇' }),
+      delButton(`Obrisati snimku ${info.time}?`, `${dir}/${f.n}`, li));
+    if (playing && playing.dir === dir && playing.file === f.n) {
+      li.classList.add('playing');
+      playing.li = li;
+    }
+    return li;
+  }
+
+  async function loadFiles(dir, ul, count) {
+    let j;
+    try { j = await getJson('/rec?d=' + dir); } catch (e) {
+      ul.replaceChildren(el('li', { className: 'small error', textContent: 'Popis nije dostupan.' }));
+      return;
+    }
+    count.textContent = plural(j.files.length);
+    ul.replaceChildren(...j.files.map(f => fileEl(dir, f)));
+    if (!j.files.length) ul.append(el('li', { className: 'small muted', textContent: 'Prazno.' }));
+  }
+
+  function hourEl(dir, open) {
+    const h = +dir.slice(11, 13), span = `${two(h)}:00 – ${two((h + 1) % 24)}:00`;
+    const det = el('details', { className: 'hour' });
+    const count = el('span', { className: 'count small muted' });
+    const ul = el('ul', { className: 'files' });
+    const sum = el('summary');
+    det.dataset.key = dir;
+    sum.append(el('span', { className: 'label', textContent: span }), count,
+               delButton(`Obrisati snimke od ${span.replace(' – ', ' do ')}?`, dir, det));
+    det.append(sum, ul);
+    det.addEventListener('toggle', () => { if (det.open) loadFiles(dir, ul, count); });
+    det.open = open;
+    return det;
+  }
+
+  async function loadList() {
+    let j;
+    try { j = await getJson('/rec'); } catch (e) {
+      daysEl.replaceChildren(el('p', { className: 'small error empty', textContent: 'Popis nije dostupan.' }));
+      return;
+    }
+    listLoaded = true;
+    const open = new Set([...daysEl.querySelectorAll('details[open]')].map(d => d.dataset.key));
+    const byDay = new Map();
+    for (const d of j.dirs.slice().reverse()) {
+      const day = d.slice(0, 11);
+      if (!byDay.has(day)) byDay.set(day, []);
+      byDay.get(day).push(d);
+    }
+    daysEl.replaceChildren();
+    if (!byDay.size) daysEl.append(el('p', { className: 'small muted empty', textContent: 'Na kartici nema snimki.' }));
+    let first = true;
+    for (const [day, hours] of byDay) {
+      const det = el('details', { className: 'day' });
+      const sum = el('summary');
+      det.dataset.key = day;
+      sum.append(el('span', { className: 'label', textContent: dayLabel(day) }),
+                 el('span', { className: 'small muted', textContent: hours.length + ' h' }),
+                 delButton(`Obrisati sve snimke od ${dayLabel(day)}?`, day, det));
+      if (dirDate(day) < SANE) sum.title = 'Snimljeno prije nego što je kamera dobila točno vrijeme';
+      const box = el('div', { className: 'hours' });
+      box.append(...hours.map(d => hourEl(d, open.has(d))));
+      det.append(sum, box);
+      det.open = open.has(day) || (first && !open.size);  // the newest day starts open
+      first = false;
+      daysEl.append(det);
+    }
+  }
+
+  // Playing a recording replaces the live picture; "Uživo" brings it back.
+  function playRecording(dir, file, li) {
+    stop();
+    ptzStop();
+    if (playing && playing.li) playing.li.classList.remove('playing');
+    playing = { dir, file, li };
+    li.classList.add('playing');
+    video.hidden = pad.hidden = bottomBar.hidden = true;
+    recVideo.hidden = liveButton.hidden = false;
+    const t = dirDate(dir);
+    setStatus(`▶ ${t.getDate()}. ${t.getMonth() + 1}. ${fileInfo(dir, file).time}`);
+    resLabel.textContent = '';
+    recVideo.src = `/rec/${dir}/${file}`;
+    recVideo.play().catch(() => {});
+    if (!matchMedia('(min-width: 900px)').matches) openPanel(false);  // phones: show the picture
+  }
+  function goLive() {
+    if (!playing) return;
+    if (playing.li) playing.li.classList.remove('playing');
+    playing = null;
+    recVideo.pause();
+    recVideo.removeAttribute('src');
+    recVideo.load();
+    recVideo.hidden = liveButton.hidden = true;
+    video.hidden = pad.hidden = bottomBar.hidden = false;
+    play();
+  }
+  liveButton.addEventListener('click', goLive);
+  // Minute after minute: the next file in the same hour follows on its own.
+  recVideo.addEventListener('ended', () => {
+    const next = playing && playing.li && playing.li.nextElementSibling;
+    if (next && next.dataset.file) playRecording(playing.dir, next.dataset.file, next);
+  });
+  recVideo.addEventListener('error', () => { if (playing) setStatus('Snimka se ne može pustiti'); });
+
   // Without the cloud the camera has no clock source; give it ours.
-  fetch('/time?t=' + Date.now(), { cache: 'no-store' }).catch(() => {});
+  fetch('/time?t=' + Date.now(), { cache: 'no-store' }).catch(() => {}).finally(() => {
+    let open = false;
+    try { open = localStorage.getItem('panel') === '1'; } catch (e) {}
+    if (open) openPanel(true);
+  });
   play();
 </script>
 </body>
