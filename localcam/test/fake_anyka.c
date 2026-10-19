@@ -9,8 +9,10 @@
  * Every 15th frame is a key frame and the stream starts mid-GOP, so the
  * library must drop the leading P frames.
  */
+#include <fcntl.h>
 #include <pthread.h>
 #include <stdint.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
@@ -120,6 +122,25 @@ int yi_p2p_on_ptz_direction_ctrl(int direction, uint32_t speed)
 
 int yi_p2p_on_ptz_direction_ctrl_stop(void)
 {
+	return 0;
+}
+
+/* Recording: 0 off, 1 all the time, 2 on motion. The last mode goes to
+ * $LOCALCAM_SD/fake_record_mode, so the test can see what was asked. */
+int AkSetRecordMode(int mode)
+{
+	char path[200], c = '0' + mode;
+	const char *sd = getenv("LOCALCAM_SD");
+	int f;
+
+	if (!sd || mode < 0 || mode > 2)
+		return -1;
+	snprintf(path, sizeof(path), "%s/fake_record_mode", sd);
+	f = open(path, O_WRONLY | O_CREAT | O_TRUNC, 0644);
+	if (f >= 0) {
+		write(f, &c, 1);
+		close(f);
+	}
 	return 0;
 }
 

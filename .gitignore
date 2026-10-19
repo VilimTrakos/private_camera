@@ -17,3 +17,8 @@
 
 # Wi-Fi lozinke: na kartici je wifi.conf, u repou samo wifi.conf.example
 /localcam/sd/debug/wifi.conf
+
+# Postavke koje kamera sama piše na karticu (upload.conf sadrži FTP lozinku)
+/localcam/sd/debug/camera.conf
+/localcam/sd/debug/upload.conf
+/localcam/sd/debug/upload.state
