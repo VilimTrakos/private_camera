@@ -15,3 +15,8 @@ AP_CHANNEL=6
 # Lozinka za stranicu kamere (obavezna: dok je nema, stranica je zakljucana).
 # Browser je pita jednom; korisnicko ime moze biti bilo sto. Do 63 znaka.
 WEB_PASSWORD=
+
+# FTP kamere (port 21, korisnik root, pristup cijelom sustavu). Radi samo uz
+# hash lozinke, bez njega se gasi. Hash se radi u WSL-u: openssl passwd -1 'lozinka'
+# (kamera zna samo MD5-crypt, $1$...; same lozinke nema na kartici).
+FTP_PASSWORD_HASH=

@@ -16,7 +16,10 @@ LOG=$D/localcam.log
 # 1 = anyka_ipc's console output is discarded (no log spam on the serial
 #     console); 0 = keep it, for debugging.
 QUIET=1
-# 1 = stop the FTP server that rc.local starts on port 21 (root, no password).
+# 1 = stop the FTP server that rc.local starts on port 21. 0 = keep it, but
+#     root then needs the password whose hash is FTP_PASSWORD_HASH in
+#     wifi.conf; without a valid hash it is stopped as well (out of the box
+#     it takes any password).
 STOP_FTP=0
 # 1 = daemon's factory test and discovery (TCP 6789, 6790, UDP 8192) and
 #     anyka_ipc's tuning tools (TCP 8000, 8012) listen only on 127.0.0.1, not
@@ -67,7 +70,23 @@ mkdir -p $T
 	: > $T/resolv.conf
 	mount -o bind $T/resolv.conf /etc/jffs2/resolv.conf && echo "emptied /etc/resolv.conf"
 
-	if [ "$STOP_FTP" = 1 ]; then
+	# rc.local's ftpd checks root against /etc/passwd (-> /etc/jffs2/passwd),
+	# where the password field is empty, so any password works. A copy in RAM
+	# with the hash goes over it; the flash is not changed. busybox reads
+	# /etc/shadow only when the field is "x", so the hash goes in passwd.
+	FTP_HASH=$(sed -n 's/^FTP_PASSWORD_HASH=//p' $D/wifi.conf | sed "s/$(printf '\r')\$//" | head -n 1)
+	case "$FTP_HASH" in
+	*[!./0-9A-Za-z\$]*) FTP_HASH= ;;	# also keeps ":" out of passwd
+	'$1$'?*'$'?*) ;;			# MD5-crypt, the only kind uClibc has
+	*) FTP_HASH= ;;
+	esac
+	if [ "$STOP_FTP" != 1 ] && [ -n "$FTP_HASH" ] &&
+	   sed "s|^root:[^:]*:|root:$FTP_HASH:|" /etc/jffs2/passwd > $T/passwd &&
+	   grep -qF "root:$FTP_HASH:" $T/passwd &&
+	   mount -o bind $T/passwd /etc/jffs2/passwd; then
+		echo "ftp: root needs the password (FTP_PASSWORD_HASH)"
+	else
+		[ "$STOP_FTP" = 1 ] || echo "ftp: no valid FTP_PASSWORD_HASH in wifi.conf"
 		killall tcpsvd && echo "ftp stopped"
 	fi
 
