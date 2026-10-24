@@ -30,6 +30,11 @@
  *   POST /upload         on, host, port, user, pass, path (an empty pass keeps the old one)
  *   POST /upload/test    the same fields: logs in and writes a test file, saves nothing
  *
+ * Every request needs the password, WEB_PASSWORD in debug/wifi.conf (HTTP
+ * Basic, so the browser asks for it once and then sends it by itself). Until
+ * it is set, the page is locked. Basic is base64, not encryption: anyone who
+ * can capture the Wi-Fi traffic can read the password, as they can the video.
+ *
  * POST requests must carry "X-Localcam: 1". A page on another site cannot
  * add that header (the browser would ask the camera first, CORS, and gets no
  * permission), so it cannot delete recordings or change settings through the
@@ -2113,6 +2118,130 @@ static void handle_stream(int fd, const char *query)
 	session_free(s);
 }
 
+/* ---------- password for the page (HTTP Basic) ---------- */
+
+#define WEB_PASS_MAX 64
+
+static pthread_mutex_t auth_lock = PTHREAD_MUTEX_INITIALIZER;
+static pthread_mutex_t auth_fail_lock = PTHREAD_MUTEX_INITIALIZER;
+static char web_pass[WEB_PASS_MAX];	/* "" until read from wifi.conf */
+
+/*
+ * WEB_PASSWORD from debug/wifi.conf; 1 if there is one. While there is none,
+ * the file is read again on every request: at startup anyka_ipc remounts the
+ * card, so the first requests may find it missing.
+ */
+static int auth_load(void)
+{
+	static int warned;
+	char path[160], buf[4096];
+	int ok;
+
+	pthread_mutex_lock(&auth_lock);
+	if (!web_pass[0]) {
+		sd_path(path, sizeof(path), "debug/wifi.conf");
+		if (read_text(path, buf, sizeof(buf)) >= 0)
+			conf_get(buf, "WEB_PASSWORD", web_pass, sizeof(web_pass));
+		if (web_pass[0])
+			logmsg("web page password from %s\n", path);
+		else if (!warned++)
+			logmsg("WEB_PASSWORD not set in %s: the web page stays locked\n", path);
+	}
+	ok = web_pass[0] != '\0';
+	pthread_mutex_unlock(&auth_lock);
+	return ok;
+}
+
+/* Standard base64, decoded to a string; -1 if it is not base64 or too long. */
+static int base64_decode(const char *s, char *out, size_t size)
+{
+	static const char abc[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+	unsigned bits = 0, nbits = 0;
+	size_t n = 0;
+	const char *p;
+
+	for (; *s && *s != '='; s++) {
+		p = strchr(abc, *s);
+		if (!p)
+			return -1;
+		bits = bits << 6 | (unsigned)(p - abc);
+		nbits += 6;
+		if (nbits >= 8) {
+			nbits -= 8;
+			if (n >= size - 1)
+				return -1;
+			out[n++] = bits >> nbits;
+		}
+	}
+	out[n] = '\0';
+	return n;
+}
+
+/* Compares whole buffers, so the time taken does not show how much matched. */
+static int same_secret(const char *a, const char *b)
+{
+	char x[WEB_PASS_MAX] = "", y[WEB_PASS_MAX] = "";
+	unsigned char d = 0;
+	size_t i;
+
+	if (strlen(a) >= sizeof(x) || strlen(b) >= sizeof(y))
+		return 0;
+	strcpy(x, a);
+	strcpy(y, b);
+	for (i = 0; i < sizeof(x); i++)
+		d |= x[i] ^ y[i];
+	return d == 0;
+}
+
+static void send_auth_required(int fd)
+{
+	static const char body[] = "Potrebna je lozinka.\n";
+	char hdr[300];
+
+	snprintf(hdr, sizeof(hdr),
+		 "HTTP/1.1 401 Unauthorized\r\nWWW-Authenticate: Basic realm=\"Kamera\", charset=\"UTF-8\"\r\n"
+		 "Content-Type: text/plain\r\nContent-Length: %u\r\n"
+		 "Cache-Control: no-store\r\nConnection: close\r\n\r\n",
+		 (unsigned)strlen(body));
+	if (send_str(fd, hdr) == 0)
+		send_str(fd, body);
+}
+
+/*
+ * 1 if the request has the right password; otherwise the reply is already
+ * sent. Only the password is checked, the user name can be anything. A
+ * wrong one costs a second, for all clients together, so guessing is slow.
+ */
+static int auth_check(int fd, const char *req)
+{
+	char hdr[200], cred[160], addr[INET_ADDRSTRLEN] = "?", *p;
+	struct sockaddr_in peer;
+	socklen_t plen = sizeof(peer);
+
+	if (!auth_load()) {
+		send_status(fd, "403 Forbidden",
+			    "Lozinka za stranicu nije postavljena: upisi WEB_PASSWORD=... u debug/wifi.conf na kartici.\n");
+		return 0;
+	}
+	if (header_get(req, "Authorization", hdr, sizeof(hdr))) {
+		if (!strncasecmp(hdr, "Basic ", 6)) {
+			for (p = hdr + 6; *p == ' '; p++)
+				;
+			if (base64_decode(p, cred, sizeof(cred)) >= 0 && (p = strchr(cred, ':')) &&
+			    same_secret(p + 1, web_pass))
+				return 1;
+		}
+		if (getpeername(fd, (struct sockaddr *)&peer, &plen) == 0)
+			inet_ntop(AF_INET, &peer.sin_addr, addr, sizeof(addr));
+		pthread_mutex_lock(&auth_fail_lock);
+		sleep(1);
+		logmsg("wrong web page password from %s\n", addr);
+		pthread_mutex_unlock(&auth_fail_lock);
+	}
+	send_auth_required(fd);
+	return 0;
+}
+
 /* POST only with "X-Localcam: 1" (see the top of this file); the body is a form. */
 static void handle_post(int fd, const char *path, const char *req, const char *body)
 {
@@ -2179,6 +2308,8 @@ static void *client_thread(void *arg)
 		have += r;
 	}
 	body[have] = '\0';
+	if (!auth_check(fd, req))
+		goto out;
 	header_get(req, "Range", range, sizeof(range));
 
 	/* Headers are read; now the request line is cut up in place. */

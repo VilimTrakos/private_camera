@@ -11,3 +11,7 @@ HOME_PASSWORD=
 AP_SSID=Kamera
 AP_PASSWORD=
 AP_CHANNEL=6
+
+# Lozinka za stranicu kamere (obavezna: dok je nema, stranica je zakljucana).
+# Browser je pita jednom; korisnicko ime moze biti bilo sto. Do 63 znaka.
+WEB_PASSWORD=

@@ -6,6 +6,7 @@ in for anyka_ipc. Usage:
   client.py --setup SD      fill a folder that stands in for the SD card
   client.py HOST PORT SD    run the tests (SD: the same folder)
 """
+import base64
 import os
 import posixpath
 import socket
@@ -51,6 +52,9 @@ def setup(sd):
                 f.write(data)
     os.makedirs(os.path.join(rec, "notes"), exist_ok=True)  # not a recording folder
     os.makedirs(os.path.join(sd, "debug"), exist_ok=True)
+    # no WEB_PASSWORD yet: the page starts locked; Windows line endings (Notepad)
+    with open(os.path.join(sd, "debug", "wifi.conf"), "w", newline="\r\n") as f:
+        f.write("HOME_SSID=\nHOME_PASSWORD=x\nAP_PASSWORD=12345678\n")
 
 
 if sys.argv[1] == "--setup":
@@ -59,6 +63,14 @@ if sys.argv[1] == "--setup":
 
 HOST, PORT, SD = sys.argv[1], int(sys.argv[2]), sys.argv[3]
 REC = os.path.join(SD, "record")
+WEB_PASSWORD = "tajna: lozinka"
+
+
+def basic(user, password):
+    return "Authorization: Basic " + base64.b64encode(f"{user}:{password}".encode()).decode() + "\r\n"
+
+
+AUTH = basic("bilo tko", WEB_PASSWORD)
 failures = []
 
 
@@ -86,14 +98,14 @@ def request(raw, timeout=5):
     return status, body
 
 
-def get(path):
-    return request(f"GET {path} HTTP/1.1\r\nHost: x\r\n\r\n".encode())
+def get(path, auth=AUTH):
+    return request(f"GET {path} HTTP/1.1\r\nHost: x\r\n{auth}\r\n".encode())
 
 
-def get_full(path, extra=""):
+def get_full(path, extra="", auth=AUTH):
     """Like get(), plus the response headers (lower-case names)."""
     s = socket.create_connection((HOST, PORT), timeout=10)
-    s.sendall(f"GET {path} HTTP/1.1\r\nHost: x\r\n{extra}\r\n".encode())
+    s.sendall(f"GET {path} HTTP/1.1\r\nHost: x\r\n{auth}{extra}\r\n".encode())
     data = b""
     while True:
         chunk = s.recv(65536)
@@ -107,9 +119,9 @@ def get_full(path, extra=""):
     return lines[0], headers, body
 
 
-def post(path, fields, token=True, timeout=40):
+def post(path, fields, token=True, timeout=40, auth=AUTH):
     body = urllib.parse.urlencode(fields).encode()
-    hdr = f"POST {path} HTTP/1.1\r\nHost: x\r\nContent-Type: application/x-www-form-urlencoded\r\n"
+    hdr = f"POST {path} HTTP/1.1\r\nHost: x\r\n{auth}Content-Type: application/x-www-form-urlencoded\r\n"
     if token:
         hdr += "X-Localcam: 1\r\n"
     hdr += f"Content-Length: {len(body)}\r\n\r\n"
@@ -258,14 +270,14 @@ class FTPServer:
 class Stream:
     """Reads framed H.264 from /stream and validates every frame."""
 
-    def __init__(self, hd, rcvbuf=None):
+    def __init__(self, hd, rcvbuf=None, auth=AUTH):
         self.sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         if rcvbuf:
             # small receive window, so a paused reader really backs up the camera
             self.sock.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, rcvbuf)
         self.sock.settimeout(5)
         self.sock.connect((HOST, PORT))
-        self.sock.sendall(f"GET /stream?hd={hd} HTTP/1.1\r\nHost: x\r\n\r\n".encode())
+        self.sock.sendall(f"GET /stream?hd={hd} HTTP/1.1\r\nHost: x\r\n{auth}\r\n".encode())
         self.buf = b""
         while b"\r\n\r\n" not in self.buf:
             chunk = self.sock.recv(4096)
@@ -313,6 +325,56 @@ class Stream:
         self.sock.close()
 
 
+# ---------- password for the page (WEB_PASSWORD in debug/wifi.conf) ----------
+
+# Not set yet: the page is locked for everyone, with or without a password.
+status, body = get("/", auth="")
+check("403" in status and b"WEB_PASSWORD" in body, f"no WEB_PASSWORD: page locked ({status})")
+
+status, _ = get("/")
+check("403" in status, f"no WEB_PASSWORD: locked even with a password ({status})")
+
+# Set it. The camera reads wifi.conf again on the next request.
+with open(os.path.join(SD, "debug", "wifi.conf"), "a", newline="\r\n") as f:
+    f.write(f"WEB_PASSWORD={WEB_PASSWORD}\n")
+
+# Without a password: 401, and the header that makes the browser ask.
+status, h, _ = get_full("/", auth="")
+check("401" in status and h.get("www-authenticate", "").startswith('Basic realm="Kamera"'),
+      f"no password -> 401, the browser asks ({status})")
+
+# The right password, with any user name.
+status, _ = get("/")
+check(status.endswith("200 OK"), f"right password -> 200 ({status})")
+
+status, _ = get("/", auth=basic("admin", WEB_PASSWORD))
+check(status.endswith("200 OK"), f"another user name, same password -> 200 ({status})")
+
+# Wrong ones. Each wrong try costs a second.
+start = time.time()
+status, _ = get("/", auth=basic("bilo tko", WEB_PASSWORD + "x"))
+took = time.time() - start
+check("401" in status and took >= 0.9, f"wrong password -> 401, after {took:.1f} s")
+
+status, _ = get("/", auth=basic("bilo tko", WEB_PASSWORD[:-1]))
+check("401" in status, f"password missing its last letter -> 401 ({status})")
+
+status, _ = get("/", auth="Authorization: Bearer xyz\r\n")
+check("401" in status, f"not Basic -> 401 ({status})")
+
+# Everything needs it, not just the page.
+for path in ("/status", "/rec", "/upload", "/jmuxer.min.js", "/ptz?dir=stop"):
+    status, _ = get(path, auth="")
+    check("401" in status, f"GET {path} without a password -> 401 ({status})")
+
+status, _ = post("/record", {"on": "0"}, auth="")
+nothing_changed = not os.path.exists(os.path.join(SD, "fake_record_mode"))
+check("401" in status and nothing_changed, f"POST without a password -> 401, nothing changed ({status})")
+
+s = Stream(1, auth="")
+check("401" in s.status, f"/stream without a password -> 401 ({s.status})")
+s.close()
+
 # static files and routing
 status, body = get("/")
 check(status.endswith("200 OK") and b"jmuxer.min.js" in body, "GET / serves index.html")
@@ -321,7 +383,7 @@ check(status.endswith("200 OK") and len(body) > 100000, f"GET /jmuxer.min.js ({l
 for bad in ("/../config.sh", "/..%2fconfig.sh", "/.hidden", "/nope.js"):
     status, _ = get(bad)
     check("404" in status, f"GET {bad} -> 404 ({status})")
-status, _ = request(b"POST / HTTP/1.1\r\nHost: x\r\nContent-Length: 0\r\n\r\n")
+status, _ = request(f"POST / HTTP/1.1\r\nHost: x\r\n{AUTH}Content-Length: 0\r\n\r\n".encode())
 check("405" in status, f"POST -> 405 ({status})")
 status, _ = get("/time?t=abc")
 check("400" in status, f"/time with bad value -> 400 ({status})")
