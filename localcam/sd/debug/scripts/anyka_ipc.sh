@@ -2,8 +2,9 @@
 # Stand-in for /usr/sbin/anyka_ipc.sh: the same start/stop/restart, except
 # that anyka_ipc's console output can be discarded (QUIET in config.sh), each
 # run's end is logged to debug/localcam.log (exit status 128+N = killed by
-# signal N), and after MAX_RUNS quick deaths in a row it is not started again,
-# so a broken setup cannot keep the camera cycling.
+# signal N), after MAX_RUNS quick deaths in a row it is not started again,
+# so a broken setup cannot keep the camera cycling, and with CLOSE_PORTS it
+# runs with lib/libbindguard.so preloaded.
 PATH=$PATH:/bin:/sbin:/usr/bin:/usr/sbin
 T=/tmp/localcam
 LOG=/mnt/debug/localcam.log
@@ -31,6 +32,12 @@ start()
 	# Our fuser/umount/mount guards come first for anyka_ipc (scripts/sdguard.sh).
 	PATH=$T/bin:$PATH
 	export PATH
+	# CLOSE_PORTS in config.sh: its tuning tool servers stay on 127.0.0.1.
+	PRELOAD=$(cat $T/preload 2>/dev/null)
+	if [ -n "$PRELOAD" ] && [ -f "$PRELOAD" ]; then
+		LD_PRELOAD=$PRELOAD
+		export LD_PRELOAD
+	fi
 	(
 		started=$(cut -d. -f1 /proc/uptime)
 		if [ "$OUT" = /dev/null ]; then

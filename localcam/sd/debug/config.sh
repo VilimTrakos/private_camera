@@ -18,6 +18,10 @@ LOG=$D/localcam.log
 QUIET=1
 # 1 = stop the FTP server that rc.local starts on port 21 (root, no password).
 STOP_FTP=0
+# 1 = daemon's factory test and discovery (TCP 6789, 6790, UDP 8192) and
+#     anyka_ipc's tuning tools (TCP 8000, 8012) listen only on 127.0.0.1, not
+#     on the network (lib/libbindguard.so, scripts/daemon.sh).
+CLOSE_PORTS=1
 # 1 = keep deleting the default route, so nothing can reach the internet even
 #     if something adds one.
 BLOCK_INTERNET=1
@@ -65,6 +69,21 @@ mkdir -p $T
 
 	if [ "$STOP_FTP" = 1 ]; then
 		killall tcpsvd && echo "ftp stopped"
+	fi
+
+	# service.sh starts daemon right after this script, through the stand-in;
+	# anyka_ipc.sh preloads the same library when $T/preload names it. Only
+	# if the library is there: uClibc will not start a program whose
+	# LD_PRELOAD library is missing.
+	if [ "$CLOSE_PORTS" = 1 ]; then
+		mkdir -p $T/orig
+		if [ -f $T/lib/libbindguard.so ] && cp /usr/bin/daemon $T/orig/daemon &&
+		   mount -o bind $T/scripts/daemon.sh /usr/bin/daemon; then
+			echo $T/lib/libbindguard.so > $T/preload
+			echo "daemon and anyka_ipc: test ports on 127.0.0.1 only"
+		else
+			echo "CLOSE_PORTS: lib/libbindguard.so missing or daemon not replaced, test ports stay open"
+		fi
 	fi
 } > $LOG 2>&1
 

@@ -1,5 +1,6 @@
 #!/bin/sh
-# Builds the three replacement libraries into sd/debug/lib/ inside the
+# Builds the three replacement libraries and libbindguard.so (CLOSE_PORTS in
+# config.sh) into sd/debug/lib/ inside the
 # localcam-build Docker image (see Dockerfile: Debian armel gcc + qemu).
 #
 # The camera runs uClibc 0.9.33, not glibc, so the libraries are linked
@@ -31,8 +32,11 @@ $CC $CFLAGS $LDFLAGS -Wl,-soname,liboss.so -DSTUB_OSS \
 	-o $OUT/liboss.so src/cloud_stubs.c $LIBS
 $CC $CFLAGS $LDFLAGS -Wl,-soname,libcloudapi.so -DSTUB_CLOUDAPI \
 	-o $OUT/libcloudapi.so src/cloud_stubs.c $LIBS
-# Test-only stand-in for anyka_ipc (see test/run_test.sh).
+$CC $CFLAGS $LDFLAGS -Wl,-soname,libbindguard.so \
+	-o $OUT/libbindguard.so src/bindguard.c $LIBS
+# Test-only stand-in for anyka_ipc and the bindguard probe (see test/run_test.sh).
 $CC $CFLAGS $LDFLAGS -o test/build/fake_anyka.so test/fake_anyka.c $LIBS
+$CC $CFLAGS $LDFLAGS -o test/build/bind_probe.so test/bind_probe.c $LIBS
 
 # Undefined symbols must be provided by the camera's libraries.
 exports() {
@@ -47,7 +51,7 @@ arm-linux-gnueabi-readelf --dyn-syms -W /sysroot/usr/bin/anyka_ipc |
 	awk '$7 != "UND" && $8 != "" {sub(/@.*/, "", $8); print $8}' | sort -u > test/build/anyka_exports.txt
 
 fail=0
-for so in $OUT/libYiP2P.so $OUT/liboss.so $OUT/libcloudapi.so; do
+for so in $OUT/libYiP2P.so $OUT/liboss.so $OUT/libcloudapi.so $OUT/libbindguard.so; do
 	missing=$(arm-linux-gnueabi-readelf --dyn-syms -W $so |
 		awk '$7 == "UND" && $8 != "" {sub(/@.*/, "", $8); print $8}' | sort -u |
 		comm -23 - test/build/camera_exports.txt | comm -23 - test/build/anyka_exports.txt)

@@ -1,7 +1,8 @@
 #!/bin/sh
 # Runs the ARM build of libYiP2P.so under qemu with the camera's own uClibc
 # (../rootfs), preloaded into busybox together with fake_anyka.so, then tests
-# it over HTTP from the host with client.py. Run ../build.sh first.
+# it over HTTP from the host with client.py; then test/bind_test.sh checks
+# libbindguard.so. Run ../build.sh first.
 #
 # A temporary folder stands in for the SD card (record/ with made-up
 # recordings, debug/ for the settings); client.py also runs a small FTP
@@ -29,4 +30,6 @@ python3 -I "$HERE/test/client.py" 127.0.0.1 $PORT "$SD" || status=$?
 echo "--- library log (stderr of the ARM process)"
 docker logs localcam-test 2>&1 | tail -30
 docker rm -f localcam-test >/dev/null
+echo "--- libbindguard.so"
+sh "$HERE/test/bind_test.sh" || status=1
 exit $status
