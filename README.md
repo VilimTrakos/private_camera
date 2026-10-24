@@ -84,6 +84,7 @@ The programs in `/usr/bin` (27 of them) and the Yi libraries were decompiled to 
 - The camera has **no** RTSP or ONVIF server. Settings for them exist, but nothing uses them. Live video only exists through the cloud, so local streaming had to be written.
 - `anyka_ipc` and `libYiP2P.so` call each other. The program calls `yi_p2p_*`, and the library calls back through `yi_p2p_on_*`, for example `yi_p2p_on_new_session` when a viewer connects. That is why a replacement library can pretend to be the Yi app and get H.264 frames from `anyka_ipc`.
 - An FTP server runs on port 21 with access to the whole system and no password.
+- `daemon` listens on TCP 6789 for a factory test tool: anyone on the network can make it run programs as root. localcam closes it and puts a password on FTP, see [Passwords and ports](#passwords-and-ports).
 
 The decompiled parts that get replaced are in [original/](original/).
 
@@ -167,6 +168,13 @@ The camera still records to the SD card, one MP4 a minute. The side panel lists 
 - **http://ADDRESS/status** shows the routes and DNS, so all of this can be checked.
 
 For extra safety, the camera's internet access can also be blocked on the router.
+
+## Passwords and ports
+
+- The web page and FTP (port 21) need a password, set in `wifi.conf`.
+- The ports the stock firmware opens for factory tools (TCP 6789, 6790, 8000, 8012, UDP 8192) cannot be reached from the network: they now listen only inside the camera (127.0.0.1).
+
+Details: [docs/portovi.md](docs/portovi.md) (in Croatian).
 
 ## What is where
 

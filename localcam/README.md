@@ -4,7 +4,7 @@ Pokreće se sa SD kartice preko `debug` kuke u `/usr/sbin/service.sh`. Flash se 
 
 ## Korištenje
 
-1. Prvi put kopiraj `sd/debug/wifi.conf.example` u `sd/debug/wifi.conf` (prava datoteka nije u gitu jer sadrži lozinke). U `debug/wifi.conf` na kartici upiši kućni Wi-Fi (`HOME_SSID`, `HOME_PASSWORD`) ili ostavi prazno za vlastitu mrežu kamere (`AP_SSID`, `AP_PASSWORD`). Može i u Notepadu.
+1. Prvi put kopiraj `sd/debug/wifi.conf.example` u `sd/debug/wifi.conf` (prava datoteka nije u gitu jer sadrži lozinke). U `debug/wifi.conf` na kartici upiši kućni Wi-Fi (`HOME_SSID`, `HOME_PASSWORD`) ili ostavi prazno za vlastitu mrežu kamere (`AP_SSID`, `AP_PASSWORD`), te lozinke za stranicu (`WEB_PASSWORD`) i FTP (`FTP_PASSWORD_HASH`, upute u `wifi.conf.example`). Može i u Notepadu.
 2. Otvori stranicu kamere u browseru na istoj mreži:
    - kućni Wi-Fi: **http://ADRESA/**, adresu piše u `debug/localcam.log` (redak `net: home Wi-Fi ...`), na serijskoj konzoli ili u popisu uređaja na routeru;
    - vlastita mreža kamere: spoji mobitel na nju i otvori **http://192.168.10.1/**.
@@ -38,7 +38,7 @@ O slanju na server:
 - snimke ostaju i na kartici, dok ih ne obriše pravilo iznad;
 - postavke su u `debug/upload.conf`, a lozinka je ondje u čistom tekstu. Stranica je nikad ne šalje natrag u browser.
 
-Promjene (snimanje, brisanje, server) idu POST zahtjevom sa zaglavljem `X-Localcam: 1`. Stranica s neke druge web adrese to zaglavlje ne može dodati, pa preko browsera ne može brisati snimke ni mijenjati postavke. Lozinke za samu stranicu nema: tko je u istoj mreži, može sve, kao i preko FTP-a kamere.
+Promjene (snimanje, brisanje, server) idu POST zahtjevom sa zaglavljem `X-Localcam: 1`. Stranica s neke druge web adrese to zaglavlje ne može dodati, pa preko browsera ne može brisati snimke ni mijenjati postavke. Stranica traži lozinku `WEB_PASSWORD`; korisničko ime može biti bilo što.
 
 Kamera ni na kućnom Wi-Fiju nema put van: `scripts/udhcpc.sh` ne uzima gateway ni DNS od routera, `/etc/resolv.conf` je prazan, a `watch.sh` briše default rutu ako je itko doda. Za dodatnu sigurnost na routeru se može blokirati internet za MAC adresu kamere. U vlastitoj mreži kamere mobitel ne dobiva gateway ni DNS, pa za internet i dalje koristi mobilne podatke. Stranica kod otvaranja postavi sat kamere prema mobitelu (bez oblaka kamera nema izvor vremena), pa snimke dobiju točno vrijeme.
 
@@ -46,10 +46,10 @@ Gasi se izvlačenjem napajanja; karticu vadi tek kad je kamera ugašena.
 
 ## Izmjene bez vađenja kartice
 
-Dok je kamera na mreži, datoteke na kartici mijenjaju se preko FTP-a (`STOP_FTP=0`). Iz WSL-a ide preko Windowsa (`curl.exe`), jer WSL ne vidi kućnu mrežu:
+Dok je kamera na mreži, datoteke na kartici mijenjaju se preko FTP-a (korisnik `root`, FTP lozinka). Iz WSL-a ide preko Windowsa (`curl.exe`), jer WSL ne vidi kućnu mrežu:
 
 ```sh
-curl.exe -u root: -T sd/debug/www/index.html ftp://ADRESA/mnt/debug/www/index.html
+curl.exe -u 'root:LOZINKA' -T sd/debug/www/index.html ftp://ADRESA/mnt/debug/www/index.html
 ```
 
 `config.sh` kopira karticu u RAM samo pri paljenju, pa nakon uploada treba restartati kameru (izvući i vratiti napajanje). Zatim **osvježi stranicu**: otvorena stranica se nakon restarta sama ponovno spoji na video, ali ostaje stara verzija.
@@ -67,13 +67,15 @@ Sve se prvo kopira u RAM (`/tmp/localcam`) i radi odande. Kad snimanje krene, `a
 | `/usr/bin/cloudAPI` | svi Yi web API pozivi vraćaju grešku (nakon 2 s, da petlja ponavljanja ne troši procesor) |
 | `wifi_manage.sh`, `wifi_station.sh`, `wifi_driver.sh`, `wifi_run.sh`, `eth_manage.sh`, `ap.sh`, `wifi_ap.sh`, `update.sh` | prazne skripte: `anyka_ipc` ne traži staru mrežu i ne restarta radio |
 | `/usr/sbin/anyka_ipc.sh` | ispis `anyka_ipc` u `/dev/null` (`QUIET=1`), log svakog kraja rada, najviše 4 brza pada zaredom |
+| `/usr/bin/daemon` | isti program, ali tvornički portovi slušaju samo unutar kamere (`CLOSE_PORTS`) |
+| `/etc/jffs2/passwd` | root dobiva FTP lozinku (`FTP_PASSWORD_HASH`) |
 
 Pozadinski poslovi (svi iz RAM-a):
 - `scripts/net_start.sh` upali Wi-Fi driver (RTL8188FU) i spoji kameru na kućni Wi-Fi bez gatewaya i DNS-a (`scripts/udhcpc.sh`), ili, ako to ne uspije ili nije upisano, digne vlastitu mrežu (`hostapd`, DHCP na `192.168.10.1`);
 - `scripts/watch.sh` briše default rutu (`BLOCK_INTERNET`) i ponovno montira karticu ako nije montirana;
 - `scripts/sdguard.sh` je u PATH-u samo za `anyka_ipc` kao `fuser`, `umount` i `mount`: dok je kartica montirana, njegov `fuser_remount` (`fuser -m -k /mnt`, `umount -lf /mnt`, `mount -t vfat`) ne radi ništa. Bez toga bi se exFAT kartica odmontirala i snimanje bi stalo.
 
-Postavke na vrhu `config.sh`: `QUIET`, `STOP_FTP` (0 = FTP na portu 21 ostaje: pristup cijelom sustavu kamere bez lozinke, za svakoga na istoj mreži; na kućnom Wi-Fiju to je cijela kućna mreža), `BLOCK_INTERNET`, `DIAG` (popis procesa prije neočekivanog kraja `anyka_ipc`, u `debug/anyka_exit.log`).
+Postavke na vrhu `config.sh`: `QUIET`, `STOP_FTP` (0 = FTP ostaje, s lozinkom; bez `FTP_PASSWORD_HASH` se gasi), `CLOSE_PORTS` (1 = tvornički portovi samo unutar kamere), `BLOCK_INTERNET`, `DIAG` (popis procesa prije neočekivanog kraja `anyka_ipc`, u `debug/anyka_exit.log`).
 
 ## Provjera
 
@@ -85,7 +87,7 @@ Bez kartice i UART-a: **http://ADRESA/status** pokazuje uptime, rute (ne smije b
 
 ```sh
 ./build.sh          # ARM .so datoteke u sd/debug/lib/ (Docker slika localcam-build, treba ../rootfs iz KAMERA.md)
-./test/run_test.sh  # libYiP2P.so pod qemu s kamerinim uClibc-om, HTTP testovi
+./test/run_test.sh  # libYiP2P.so pod qemu s kamerinim uClibc-om, HTTP testovi, portovi i FTP lozinka
 ```
 
 Test umjesto kartice koristi privremenu mapu s izmišljenim snimkama, a za slanje diže mali FTP server u Pythonu. Taj server u PASV odgovoru namjerno daje krivu adresu, jer kamera mora koristiti adresu kontrolne veze.
